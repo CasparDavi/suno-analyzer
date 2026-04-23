@@ -47,7 +47,7 @@ audio{width:100%;border-radius:8px;margin:8px 0;accent-color:#7ab8f5}
 <script src="https://cdn.jsdelivr.net/npm/onnxruntime-web@1.18.0/dist/ort.min.js"></script>
 </head>
 <body>
-<h1>Suno Audio Analyzer <span style="font-size:10px;color:#444;font-weight:400">v2.9 · Essentia+Demucs</span></h1>
+<h1>Suno Audio Analyzer <span style="font-size:10px;color:#444;font-weight:400">v3.0 · Essentia+Demucs</span></h1>
 <div id="tt"></div>
 
 <div class="section">
@@ -835,22 +835,188 @@ async function runStems(){
   btn.disabled=false;
 }
 
-function renderStemsPlayers(stems){
+var _stemAudios={};  // {name: AudioContext buffer source}
+var _stemNodes={};   // {name: {source, gainNode}}
+var _stemCtx=null;
+var _stemPlaying=false;
+var _stemStartTime=0;
+var _stemOffset=0;
+var _stemMuted={vocals:false,drums:false,bass:false,other:false};
+var _stemBuffers={};
+
+async function renderStemsPlayers(stems){
   var el=document.getElementById('stems-players');
   if(!el)return;
   el.style.display='block';
-  var colors={vocals:'#e07070',drums:'#70a0e0',bass:'#70c070',other:'#c0a050'};
+
+  var colors={vocals:'#c06060',drums:'#5080c0',bass:'#50a050',other:'#a08040'};
   var labels={vocals:'Gesang',drums:'Drums',bass:'Bass',other:'Rest'};
-  el.innerHTML=Object.keys(stems).map(function(name){
-    var url='data:audio/mpeg;base64,'+stems[name];
-    var col=colors[name]||'#888';
-    var lbl=labels[name]||name;
-    return '<div style="display:flex;align-items:center;gap:8px;margin-bottom:6px">'
-      +'<span style="font-size:11px;color:'+col+';min-width:52px;font-weight:500">'+lbl+'</span>'
-      +'<audio controls src="'+url+'" style="flex:1;height:28px;accent-color:'+col+'"></audio>'
-      +'<a href="'+url+'" download="'+name+'.mp3" style="font-size:10px;color:#555;text-decoration:none">↓</a>'
-      +'</div>';
-  }).join('');
+  var order=['vocals','drums','bass','other'];
+
+  // Build dark mixer UI
+  el.innerHTML='<div style="background:#0d0d0d;border-radius:8px;padding:10px 12px;border:1px solid #222">'
+    // Transport bar
+    +'<div style="display:flex;align-items:center;gap:10px;margin-bottom:10px">'
+    +'<button id="stems-pp" onclick="stemTogglePlay()" style="width:32px;height:32px;border-radius:50%;background:#1a1a1a;border:1px solid #333;color:#aaa;font-size:14px;cursor:pointer">▶</button>'
+    +'<button onclick="stemStop()" style="width:32px;height:32px;border-radius:50%;background:#1a1a1a;border:1px solid #333;color:#aaa;font-size:14px;cursor:pointer">■</button>'
+    +'<div id="stems-time" style="font-size:11px;color:#555;min-width:50px">0:00</div>'
+    +'<div style="flex:1;height:3px;background:#1a1a1a;border-radius:2px;cursor:pointer;position:relative" id="stems-progress-bar" onclick="stemSeek(event)">'
+    +'<div id="stems-progress-fill" style="height:100%;background:#333;border-radius:2px;width:0%;transition:width 0.1s"></div>'
+    +'</div>'
+    +'</div>'
+    // Stem rows
+    +order.filter(function(n){return stems[n];}).map(function(name){
+      var col=colors[name];
+      var lbl=labels[name];
+      var url='data:audio/mpeg;base64,'+stems[name];
+      return '<div style="display:flex;align-items:center;gap:8px;margin-bottom:5px">'
+        +'<button id="mute-'+name+'" onclick="stemToggleMute(\''+name+'\')" '
+        +'style="min-width:52px;height:22px;border-radius:4px;border:1px solid '+col+'33;'
+        +'background:#111;color:'+col+';font-size:10px;font-weight:500;cursor:pointer">'+lbl+'</button>'
+        +'<div style="flex:1;height:4px;background:#1a1a1a;border-radius:2px;position:relative">'
+        +'<div id="vu-'+name+'" style="height:100%;background:'+col+';border-radius:2px;width:0%;transition:width 0.05s"></div>'
+        +'</div>'
+        +'<a href="'+url+'" download="'+name+'.mp3" '
+        +'style="font-size:10px;color:#444;text-decoration:none;padding:2px 6px;border:1px solid #222;border-radius:3px">↓</a>'
+        +'</div>';
+    }).join('')
+    +'</div>';
+
+  // Decode all stems into AudioBuffers
+  if(!_stemCtx||_stemCtx.state==='closed'){
+    _stemCtx=new(window.AudioContext||window.webkitAudioContext)();
+  }
+  _stemBuffers={};
+  var stemNames=order.filter(function(n){return stems[n];});
+  await Promise.all(stemNames.map(async function(name){
+    var b64=stems[name];
+    var bin=atob(b64);
+    var ab=new ArrayBuffer(bin.length);
+    var view=new Uint8Array(ab);
+    for(var i=0;i<bin.length;i++) view[i]=bin.charCodeAt(i);
+    _stemBuffers[name]=await _stemCtx.decodeAudioData(ab);
+  }));
+
+  document.getElementById('stems-pp').textContent='▶';
+  _stemPlaying=false;
+  _stemOffset=0;
+
+  // Start VU meter RAF
+  stemVuLoop();
+}
+
+function stemCreateNodes(offset){
+  // Stop existing
+  Object.values(_stemNodes).forEach(function(n){try{n.source.stop();}catch(e){}});
+  _stemNodes={};
+  Object.keys(_stemBuffers).forEach(function(name){
+    var source=_stemCtx.createBufferSource();
+    source.buffer=_stemBuffers[name];
+    var gain=_stemCtx.createGain();
+    gain.gain.value=_stemMuted[name]?0:1;
+    source.connect(gain);
+    gain.connect(_stemCtx.destination);
+    _stemNodes[name]={source:source,gain:gain};
+  });
+  var when=_stemCtx.currentTime+0.05;
+  Object.values(_stemNodes).forEach(function(n){n.source.start(when,offset);});
+  _stemStartTime=when-offset;
+}
+
+function stemTogglePlay(){
+  if(!Object.keys(_stemBuffers).length)return;
+  if(_stemCtx.state==='suspended')_stemCtx.resume();
+  if(_stemPlaying){
+    _stemOffset=_stemCtx.currentTime-_stemStartTime;
+    Object.values(_stemNodes).forEach(function(n){try{n.source.stop();}catch(e){}});
+    _stemNodes={};
+    _stemPlaying=false;
+    document.getElementById('stems-pp').textContent='▶';
+  } else {
+    stemCreateNodes(_stemOffset);
+    _stemPlaying=true;
+    document.getElementById('stems-pp').textContent='⏸';
+  }
+}
+
+function stemStop(){
+  Object.values(_stemNodes).forEach(function(n){try{n.source.stop();}catch(e){}});
+  _stemNodes={};
+  _stemPlaying=false;
+  _stemOffset=0;
+  _stemStartTime=0;
+  var pp=document.getElementById('stems-pp');
+  if(pp)pp.textContent='▶';
+  var fill=document.getElementById('stems-progress-fill');
+  if(fill)fill.style.width='0%';
+  var t=document.getElementById('stems-time');
+  if(t)t.textContent='0:00';
+}
+
+function stemToggleMute(name){
+  _stemMuted[name]=!_stemMuted[name];
+  var btn=document.getElementById('mute-'+name);
+  var colors={vocals:'#c06060',drums:'#5080c0',bass:'#50a050',other:'#a08040'};
+  var col=colors[name];
+  if(btn){
+    btn.style.opacity=_stemMuted[name]?'0.3':'1';
+    btn.style.textDecoration=_stemMuted[name]?'line-through':'none';
+  }
+  if(_stemNodes[name]){
+    _stemNodes[name].gain.gain.setTargetAtTime(_stemMuted[name]?0:1,_stemCtx.currentTime,0.02);
+  }
+}
+
+function stemSeek(e){
+  if(!Object.keys(_stemBuffers).length)return;
+  var bar=document.getElementById('stems-progress-bar');
+  var rect=bar.getBoundingClientRect();
+  var pct=(e.clientX-rect.left)/rect.width;
+  var dur=Object.values(_stemBuffers)[0].duration;
+  _stemOffset=Math.max(0,Math.min(dur,pct*dur));
+  if(_stemPlaying){
+    Object.values(_stemNodes).forEach(function(n){try{n.source.stop();}catch(e){}});
+    stemCreateNodes(_stemOffset);
+  }
+}
+
+function stemVuLoop(){
+  requestAnimationFrame(stemVuLoop);
+  if(!_stemPlaying||!_stemCtx)return;
+  var pos=_stemCtx.currentTime-_stemStartTime;
+  var dur=Object.values(_stemBuffers).length?Object.values(_stemBuffers)[0].duration:0;
+  if(!dur)return;
+  var pct=Math.min(1,pos/dur)*100;
+  var fill=document.getElementById('stems-progress-fill');
+  if(fill)fill.style.width=pct+'%';
+  var t=document.getElementById('stems-time');
+  if(t)t.textContent=fmt(pos);
+  // Simple VU: random placeholder until we add analyser nodes
+  // For now just show activity indicator
+  Object.keys(_stemBuffers).forEach(function(name){
+    var vu=document.getElementById('vu-'+name);
+    if(vu&&!_stemMuted[name]){
+      var w=20+Math.random()*60;
+      vu.style.width=w+'%';
+    } else if(vu){
+      vu.style.width='0%';
+    }
+  });
+  // Auto-stop at end
+  if(pos>=dur) stemStop();
+}
+
+function stemSeek(e){
+  if(!Object.keys(_stemBuffers).length)return;
+  var bar=document.getElementById('stems-progress-bar');
+  var rect=bar.getBoundingClientRect();
+  var pct=Math.max(0,Math.min(1,(e.clientX-rect.left)/rect.width));
+  var dur=Object.values(_stemBuffers)[0].duration;
+  _stemOffset=pct*dur;
+  if(_stemPlaying){
+    Object.values(_stemNodes).forEach(function(n){try{n.source.stop();}catch(e){}});
+    stemCreateNodes(_stemOffset);
+  }
 }
 
 // Check server on load and after each analysis
