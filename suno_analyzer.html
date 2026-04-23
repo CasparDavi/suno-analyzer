@@ -47,7 +47,7 @@ audio{width:100%;border-radius:8px;margin:8px 0;accent-color:#7ab8f5}
 <script src="https://cdn.jsdelivr.net/npm/onnxruntime-web@1.18.0/dist/ort.min.js"></script>
 </head>
 <body>
-<h1>Suno Audio Analyzer <span style="font-size:10px;color:#444;font-weight:400">v2.6 · Essentia</span></h1>
+<h1>Suno Audio Analyzer <span style="font-size:10px;color:#444;font-weight:400">v2.7 · Essentia</span></h1>
 <div id="tt"></div>
 
 <div class="section">
@@ -610,7 +610,7 @@ function computeMelSpectrogram(audio, sr){
   }
 
   // Slice into patches of PATCH frames
-  var patchHop=Math.floor(PATCH/2); // 50% overlap = double temporal resolution
+  var patchHop=Math.floor(PATCH/4); // 75% overlap = 4x temporal resolution, better for transients
   for(var i=0;i+PATCH<=melFrames.length;i+=patchHop){
     // Shape: [128, 96] — melBands x frames
     var patch=new Float32Array(MELS*PATCH);
