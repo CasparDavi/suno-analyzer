@@ -27,7 +27,7 @@ canvas{width:100%;border-radius:4px;display:block}
 #status{font-size:12px;color:#666;margin:4px 0}
 #progress-wrap{height:3px;background:#222;border-radius:2px;margin:6px 0;overflow:hidden}
 #progress-bar{height:100%;width:0%;background:#7ab8f5;transition:width 0.3s}
-#artwork{width:144px;height:144px;border-radius:10px;object-fit:cover;display:none;flex-shrink:0}
+#artwork{width:25%;max-width:200px;min-width:80px;aspect-ratio:1;border-radius:10px;object-fit:cover;display:none;flex-shrink:0}
 #meta{margin-bottom:10px;overflow:hidden}
 #meta h2{font-size:15px;font-weight:500;margin-bottom:3px}
 #meta-sub{font-size:12px;color:#666;margin-bottom:4px}
@@ -47,24 +47,28 @@ audio{width:100%;border-radius:8px;margin:8px 0;accent-color:#7ab8f5}
 <script src="https://cdn.jsdelivr.net/npm/onnxruntime-web@1.18.0/dist/ort.min.js"></script>
 </head>
 <body>
-<h1>Suno Audio Analyzer <span style="font-size:10px;color:#444;font-weight:400">v3.6 · Essentia+Demucs</span></h1>
+<h1>Suno Audio Analyzer <span style="font-size:10px;color:#444;font-weight:400">v3.8 · Essentia+Demucs</span></h1>
 <div id="tt"></div>
 
 <div class="section">
   <label>Suno Song URL oder UUID</label>
-  <input type="text" id="url-input" value="https://suno.com/song/602781a8-161a-4123-aee3-2f9f35fd70d8">
-  <div class="row">
-    <button class="p" onclick="analyze()">Analysieren</button>
-    <label style="font-size:12px;color:#7ab8f5;margin-left:10px;cursor:pointer" title="WAV = bessere Qualität, aber ~10× größer als MP3">
-      <input type="checkbox" id="wav-toggle" style="accent-color:#7ab8f5;margin-right:4px">WAV
+  <div style="display:flex;gap:6px;align-items:center;margin-bottom:6px">
+    <input type="text" id="url-input" value="https://suno.com/song/602781a8-161a-4123-aee3-2f9f35fd70d8" style="margin-bottom:0;flex:1">
+    <label style="display:flex;align-items:center;gap:4px;cursor:pointer;font-size:11px;color:#555;white-space:nowrap;flex-shrink:0">
+      <input type="radio" name="fmt" id="fmt-mp3" checked style="accent-color:#7ab8f5">MP3
     </label>
-    <span style="color:#555;margin:0 8px">oder</span>
-    <label style="cursor:pointer;color:#7ab8f5;font-size:13px;border:1px solid #333;padding:4px 10px;border-radius:4px">
-      Audio-Datei laden
+    <label style="display:flex;align-items:center;gap:4px;cursor:pointer;font-size:11px;color:#555;white-space:nowrap;flex-shrink:0" title="WAV = bessere Qualität, ~10× größer">
+      <input type="radio" name="fmt" id="fmt-wav" style="accent-color:#7ab8f5">WAV
+    </label>
+  </div>
+  <div class="row" style="margin:0">
+    <button class="p" onclick="analyze()">Analysieren</button>
+    <label style="cursor:pointer;color:#7ab8f5;font-size:12px;border:1px solid #333;padding:4px 10px;border-radius:4px">
+      Datei öffnen
       <input type="file" id="file-input" accept="audio/*" style="display:none" onchange="analyzeFile(this)">
     </label>
     <span id="status"></span>
-    <button id="dl-btn" onclick="downloadAudio()" style="display:none;margin-left:8px;font-size:12px;padding:3px 8px;background:#1a2a1a;border:1px solid #3a6a3a;border-radius:4px;color:#7ab8f5;cursor:pointer">⬇ Speichern</button>
+    <button id="dl-btn" onclick="downloadAudio()" style="display:none;margin-left:auto;font-size:12px;padding:3px 8px;background:#1a2a1a;border:1px solid #3a6a3a;border-radius:4px;color:#7ab8f5;cursor:pointer">⬇ Speichern</button>
   </div>
   <div id="progress-wrap"><div id="progress-bar"></div></div>
 </div>
@@ -86,27 +90,35 @@ audio{width:100%;border-radius:8px;margin:8px 0;accent-color:#7ab8f5}
 
 <div class="section" id="export-section" style="margin-top:10px">
   <div class="slbl">Kommentar-Generator</div>
-  <div class="row" style="gap:12px;flex-wrap:wrap;margin-bottom:8px">
-    <label style="font-size:11px;color:#555;display:flex;align-items:center;gap:6px">
+  <!-- Controls row -->
+  <div class="row" style="gap:10px;flex-wrap:wrap;margin-bottom:8px;align-items:center">
+    <label style="font-size:11px;color:#555;display:flex;align-items:center;gap:5px">
       Länge
-      <select id="export-length" style="padding:4px 6px;font-size:11px;border:1px solid #333;border-radius:6px;background:#0a0a0a;color:#eee">
+      <select id="export-length" style="padding:3px 6px;font-size:11px;border:1px solid #333;border-radius:4px;background:#0a0a0a;color:#eee">
         <option value="250">~250 Zeichen</option>
         <option value="350">~350 Zeichen</option>
         <option value="500">400–500 Zeichen</option>
       </select>
     </label>
-    <label style="font-size:11px;color:#555;display:flex;align-items:center;gap:6px">
+    <label style="font-size:11px;color:#555;display:flex;align-items:center;gap:5px">
       Sprache
-      <select id="export-lang" style="padding:4px 6px;font-size:11px;border:1px solid #333;border-radius:6px;background:#0a0a0a;color:#eee">
+      <select id="export-lang" style="padding:3px 6px;font-size:11px;border:1px solid #333;border-radius:4px;background:#0a0a0a;color:#eee">
         <option value="de">Deutsch</option>
         <option value="en">English</option>
       </select>
     </label>
+    <button onclick="exportForLLM(this)" style="padding:5px 14px;font-size:12px;border:1px solid transparent;border-radius:4px;background:#1a3a5c;color:#7ab8f5;cursor:pointer;margin-left:auto" id="export-btn">
+      Prompt kopieren
+    </button>
+    <span id="export-status" style="font-size:11px;color:#555"></span>
   </div>
-  <button onclick="exportForLLM(this)" style="padding:7px 16px;font-size:13px;border:1px solid transparent;border-radius:8px;background:#1a3a5c;color:#7ab8f5;cursor:pointer" id="export-btn">
-    Prompt in Zwischenablage kopieren
-  </button>
-  <span id="export-status" style="font-size:11px;color:#555;margin-left:10px"></span>
+  <!-- Persona snippet -->
+  <div style="margin-top:4px">
+    <div style="font-size:10px;color:#444;margin-bottom:3px">Persona (wird in den Prompt eingebettet)</div>
+    <textarea id="export-persona" rows="3"
+      style="width:100%;font-size:11px;color:#888;background:#0a0a0a;border:1px solid #222;border-radius:4px;padding:6px 8px;resize:vertical;font-family:system-ui;line-height:1.5"
+    >Ich bin selbst Songwriter und Produzent auf Suno, vor allem im Bereich NDH/Industrial und Quiet Storm, höre aber auch gern Sachen, die stilistisch ganz woanders liegen. Ich schreibe keine Technik-Kommentare, sondern kurze Reaktionen die zeigen, was bei mir angekommen ist. Direkt und unaufgeregt, aber offen und ehrlich interessiert.</textarea>
+  </div>
 </div>
 
 <audio id="player" crossorigin="anonymous" style="display:none"></audio>
@@ -131,6 +143,11 @@ audio{width:100%;border-radius:8px;margin:8px 0;accent-color:#7ab8f5}
       style="position:absolute;left:0;top:0;height:100%;width:44px;
       border:none;border-right:1px solid #7ab8f544;background:#7ab8f522;
       color:#7ab8f5;font-size:14px;cursor:pointer;display:flex;align-items:center;justify-content:center">▶</button>
+    <!-- Download button right -->
+    <button id="dl-btn-wave" onclick="event.stopPropagation();downloadAudio()"
+      style="position:absolute;right:0;top:0;height:100%;width:32px;display:none;
+      border:none;border-left:1px solid #7ab8f533;background:#7ab8f511;
+      color:#7ab8f5;font-size:13px;cursor:pointer;align-items:center;justify-content:center">↓</button>
     <!-- Hidden prog-bar/fill for compat -->
     <div id="prog-bar" style="position:absolute;inset:0;pointer-events:none;opacity:0">
       <div id="prog-fill" style="height:100%;background:#7ab8f5;width:0%"></div>
@@ -202,7 +219,7 @@ audio{width:100%;border-radius:8px;margin:8px 0;accent-color:#7ab8f5}
     </span>
   </div>
   <div id="essentia-summary" style="font-size:11px;color:#888;margin:4px 0 6px;min-height:16px">Essentia noch nicht geladen.</div>
-  <div class="chart-outer" style="height:160px">
+  <div class="chart-outer" style="height:160px;max-height:160px;overflow-y:auto">
     <canvas id="essentia-canvas" style="height:160px;background:#0a0a0a" class="chart-pending">berechne...</canvas>
     <div class="playhead" id="ph-essentia"></div>
   </div>
@@ -371,11 +388,9 @@ function exportForLLM(btn){
   }
 
   text+='=== MEINE PERSPEKTIVE ===\n';
-  text+='Ich bin selbst Songwriter und Produzent auf Suno, vor allem im Bereich NDH/Industrial und Quiet Storm, höre aber auch gern Sachen, die stilistisch ganz woanders liegen.\n';
-  text+='Ich höre aufmerksam zu und nehme Arrangement, Dynamik, Spannungsbogen und Produktionsentscheidungen meist sofort mit. Trotzdem schreibe ich keine Technik-Kommentare, sondern eher kurze Reaktionen, die zeigen, was bei mir angekommen ist.\n';
-  text+='Mein Stil ist direkt und unaufgeregt, aber offen, zugewandt und ehrlich interessiert. Ich mag keine leeren Floskeln und kein übertriebenes Lob, aber ich benenne gern konkret, was funktioniert, was hängen bleibt oder was ein Stück besonders macht.\n';
-  text+='Gut sind Kommentare mit einer greifbaren Beobachtung zu Lyrics, Komposition, Atmosphäre oder Produktion. Gern auch mit einer offenen Frage, wenn sie sich natürlich ergibt. Nicht zu technisch, sondern menschlich und nah am Hörerlebnis.\n';
-  text+='Der Kommentar soll klingen wie von jemandem, der wirklich hingehört hat, Musik selbst macht und nicht nur höflich etwas Nettes dalässt.\n';
+  var personaEl=document.getElementById('export-persona');
+  var persona=personaEl?personaEl.value.trim():'';
+  if(persona)text+=persona+'\n';
 
   // Copy
   try{
@@ -444,11 +459,15 @@ function seekStart(e){
 function seekMove(e){
   if(!songDuration)return;
   e.preventDefault&&e.preventDefault();
-  var bar=document.getElementById('prog-bar');
+  // Use main waveform canvas as reference (prog-bar is hidden)
+  var bar=document.getElementById('main-waveform-canvas')||document.getElementById('prog-bar');
   var rect=bar.getBoundingClientRect();
   var clientX=e.touches?e.touches[0].clientX:e.clientX;
   var pct=Math.max(0,Math.min(1,(clientX-rect.left)/rect.width));
-  player.currentTime=pct*songDuration;
+  // Account for floating play button width (44px)
+  var btnW=44;
+  var adjustedPct=Math.max(0,Math.min(1,(clientX-rect.left-btnW)/(rect.width-btnW)));
+  player.currentTime=adjustedPct*songDuration;
   updatePlayerUI();
 }
 player.addEventListener('timeupdate',updatePlayerUI);
@@ -915,10 +934,17 @@ async function runStems(){
   var btn=document.getElementById('stems-btn');
   var st=document.getElementById('stems-status');
   var uuid=extractUUID(document.getElementById('url-input').value);
-  var useWav=document.getElementById('wav-toggle')&&document.getElementById('wav-toggle').checked;
+  var useWav=document.getElementById('fmt-wav')&&document.getElementById('fmt-wav').checked;
   var cacheKey=uuid+(useWav?'_wav':'_mp3');
   var arrayBuf=mp3Cache[cacheKey];
   if(!arrayBuf){if(st)st.textContent='Bitte zuerst analysieren';return;}
+  // Warn for long songs
+  if(songDuration>360){
+    var mins=Math.round(songDuration/60);
+    if(!confirm('Der Song ist '+mins+' Minuten lang. Stems-Berechnung kann 10-20 Minuten dauern. Fortfahren?')){
+      return;
+    }
+  }
   btn.disabled=true;
   if(st)st.textContent='Sende Audio...';
   try{
@@ -1602,7 +1628,7 @@ async function fetchMeta(uuid){
 function downloadAudio(){
   var uuid=extractUUID(document.getElementById('url-input').value);
   if(!uuid)return;
-  var useWav=document.getElementById('wav-toggle')&&document.getElementById('wav-toggle').checked;
+  var useWav=document.getElementById('fmt-wav')&&document.getElementById('fmt-wav').checked;
   var cacheKey=uuid+(useWav?'_wav':'_mp3');
   var buf=window.mp3Cache&&window.mp3Cache[cacheKey];
   if(!buf){setStatus('Nicht im Cache — bitte zuerst analysieren');return;}
@@ -1747,7 +1773,7 @@ async function analyze(){
     }
   }
   setProgress(10);setStatus('Audio laden…');
-  var useWav=document.getElementById('wav-toggle')&&document.getElementById('wav-toggle').checked;
+  var useWav=document.getElementById('fmt-wav')&&document.getElementById('fmt-wav').checked;
   var audioUrl='https://cdn1.suno.ai/'+uuid+(useWav?'.wav':'.mp3');
   try{
     var arrayBuf;
@@ -1775,6 +1801,8 @@ async function analyze(){
     // show download button now that audio is cached
     var dlBtn=document.getElementById('dl-btn');
     if(dlBtn)dlBtn.style.display='inline-block';
+    var dlBtnW=document.getElementById('dl-btn-wave');
+    if(dlBtnW)dlBtnW.style.display='flex';
     if(!audioCtx||audioCtx.state==='closed')audioCtx=new(window.AudioContext||window.webkitAudioContext)();
     if(audioCtx.state==='suspended')await audioCtx.resume();
     // slice() before decode — decodeAudioData detaches the buffer in some browsers

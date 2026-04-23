@@ -107,7 +107,7 @@ def separate():
         cmd.append(input_path)
 
         try:
-            result = subprocess.run(cmd, capture_output=True, text=True, timeout=600)
+            result = subprocess.run(cmd, capture_output=True, text=True, timeout=1800)
             if result.returncode != 0:
                 return jsonify({'error': result.stderr[-500:]}), 500
         except subprocess.TimeoutExpired:
