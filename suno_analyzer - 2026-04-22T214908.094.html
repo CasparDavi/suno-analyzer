@@ -1,0 +1,3814 @@
+<!DOCTYPE html>
+<html lang="de">
+<head>
+<meta charset="UTF-8">
+<title>Suno Audio Analyzer</title>
+<style>
+*{box-sizing:border-box;margin:0;padding:0}
+body{font-family:system-ui,sans-serif;background:#111;color:#eee;padding:1.5rem;max-width:860px}
+h1{font-size:15px;font-weight:500;color:#888;margin-bottom:1rem}
+.section{background:#1a1a1a;border-radius:8px;padding:12px;margin-bottom:10px}
+.slbl{font-size:11px;color:#555;margin-bottom:6px;display:flex;justify-content:space-between}
+input[type=text]{width:100%;padding:7px 10px;font-family:monospace;font-size:11px;border:1px solid #333;border-radius:8px;background:#0a0a0a;color:#eee;margin-bottom:6px}
+label{font-size:11px;color:#555;display:block;margin-bottom:3px}
+button{padding:7px 16px;font-size:13px;border:1px solid #444;border-radius:8px;background:transparent;color:#eee;cursor:pointer}
+button:hover{background:#222}
+button.p{background:#1a3a5c;color:#7ab8f5;border-color:transparent}
+.grid{display:grid;gap:8px;margin:10px 0}
+.g4{grid-template-columns:repeat(4,1fr)}
+.g2{grid-template-columns:repeat(2,1fr)}
+.card{background:#0f0f0f;border-radius:8px;padding:10px 12px;text-align:center}
+.card .val{font-size:20px;font-weight:500;color:#7ab8f5;margin:4px 0}
+.card .lbl{font-size:11px;color:#555}
+.gauge{position:relative;height:6px;border-radius:3px;margin-top:6px;overflow:visible}
+.gauge-track{position:absolute;left:0;right:0;top:0;height:100%;border-radius:3px}
+.gauge-marker{position:absolute;top:-3px;width:2px;height:12px;border-radius:1px;background:#fff;transform:translateX(-50%);transition:left 0.4s}
+canvas{width:100%;border-radius:4px;display:block}
+#status{font-size:12px;color:#666;margin:4px 0}
+#progress-wrap{height:3px;background:#222;border-radius:2px;margin:6px 0;overflow:hidden}
+#progress-bar{height:100%;width:0%;background:#7ab8f5;transition:width 0.3s}
+#artwork{width:144px;height:144px;border-radius:10px;object-fit:cover;display:none;flex-shrink:0}
+#meta{margin-bottom:10px;overflow:hidden}
+#meta h2{font-size:15px;font-weight:500;margin-bottom:3px}
+#meta-sub{font-size:12px;color:#666;margin-bottom:4px}
+.tag{display:inline-block;background:#1a2a1a;color:#3a7;border-radius:4px;padding:2px 8px;font-size:11px;margin:2px 2px 2px 0}
+.row{display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin:8px 0}
+audio{width:100%;border-radius:8px;margin:8px 0;accent-color:#7ab8f5}
+.chart-outer{position:relative}
+.playhead{position:absolute;top:0;bottom:0;width:1px;background:rgba(255,255,255,0.55);pointer-events:none;display:none}
+#struct-wrap{position:relative;height:16px;border-radius:4px;overflow:hidden;display:flex;margin-bottom:4px}
+.chart-pending{display:flex;align-items:center;justify-content:center;font-size:11px;color:#444;border-radius:4px;background:#0a0a0a;position:relative;overflow:hidden}
+.chart-pending::after{content:'';position:absolute;inset:0;background:linear-gradient(90deg,transparent 0%,rgba(255,255,255,0.03) 50%,transparent 100%);animation:skeleton-pulse 1.8s ease-in-out infinite;transform:translateX(-100%)}
+@keyframes skeleton-pulse{0%{transform:translateX(-100%)}100%{transform:translateX(100%)}}
+.chart-ready::after{display:none}
+.section-status{font-size:9px;color:#444;margin-left:8px;vertical-align:middle}
+#tt{position:fixed;background:#1e1e1e;border:0.5px solid #444;border-radius:6px;padding:6px 10px;font-size:12px;color:#eee;pointer-events:none;opacity:0;max-width:280px;line-height:1.5;z-index:9999;transition:opacity 0.1s;width:auto;height:auto}
+</style>
+<script src="https://cdn.jsdelivr.net/npm/@tensorflow/tfjs@4.22.0/dist/tf.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/@tensorflow-models/yamnet@0.0.2/dist/yamnet.js"></script>
+</head>
+<body>
+<h1>Suno Audio Analyzer</h1>
+<div id="tt"></div>
+
+<div class="section">
+  <label>Suno Song URL oder UUID</label>
+  <input type="text" id="url-input" value="https://suno.com/song/602781a8-161a-4123-aee3-2f9f35fd70d8">
+  <div class="row">
+    <button class="p" onclick="analyze()">Analysieren</button>
+    <label style="font-size:12px;color:#7ab8f5;margin-left:10px;cursor:pointer" title="WAV = bessere Qualität, aber ~10× größer als MP3">
+      <input type="checkbox" id="wav-toggle" style="accent-color:#7ab8f5;margin-right:4px">WAV
+    </label>
+    <span style="color:#555;margin:0 8px">oder</span>
+    <label style="cursor:pointer;color:#7ab8f5;font-size:13px;border:1px solid #333;padding:4px 10px;border-radius:4px">
+      Audio-Datei laden
+      <input type="file" id="file-input" accept="audio/*" style="display:none" onchange="analyzeFile(this)">
+    </label>
+    <span id="status"></span>
+    <button id="dl-btn" onclick="downloadAudio()" style="display:none;margin-left:8px;font-size:12px;padding:3px 8px;background:#1a2a1a;border:1px solid #3a6a3a;border-radius:4px;color:#7ab8f5;cursor:pointer">⬇ Speichern</button>
+  </div>
+  <div id="progress-wrap"><div id="progress-bar"></div></div>
+</div>
+
+<div id="meta" style="display:none;margin-bottom:10px">
+  <div style="display:flex;gap:14px;align-items:flex-start">
+    <img id="artwork" src="" alt="">
+    <div style="flex:1;min-width:0">
+      <h2 id="title">—</h2>
+      <div id="meta-sub"></div>
+      <div id="tags" style="margin-top:4px"></div>
+      <div id="lyrics-wrap" style="display:none;margin-top:8px">
+        <div style="font-size:11px;color:#555;margin-bottom:4px;cursor:pointer;user-select:none" onclick="var b=document.getElementById('lyrics-body');b.style.display=b.style.display==='none'?'block':'none';this.textContent=b.style.display==='none'?'▸ Lyrics / Prompt anzeigen':'▾ Lyrics / Prompt'">▾ Lyrics / Prompt</div>
+        <pre id="lyrics-body" style="font-size:11px;color:#888;line-height:1.7;white-space:pre-wrap;background:#0a0a0a;border-radius:6px;padding:10px;max-height:240px;overflow-y:auto;margin:0"></pre>
+      </div>
+    </div>
+  </div>
+</div>
+
+<div class="section" id="export-section" style="margin-top:10px">
+  <div class="slbl">Kommentar-Generator</div>
+  <div class="row" style="gap:12px;flex-wrap:wrap;margin-bottom:8px">
+    <label style="font-size:11px;color:#555;display:flex;align-items:center;gap:6px">
+      Länge
+      <select id="export-length" style="padding:4px 6px;font-size:11px;border:1px solid #333;border-radius:6px;background:#0a0a0a;color:#eee">
+        <option value="250">~250 Zeichen</option>
+        <option value="350">~350 Zeichen</option>
+        <option value="500">400–500 Zeichen</option>
+      </select>
+    </label>
+    <label style="font-size:11px;color:#555;display:flex;align-items:center;gap:6px">
+      Sprache
+      <select id="export-lang" style="padding:4px 6px;font-size:11px;border:1px solid #333;border-radius:6px;background:#0a0a0a;color:#eee">
+        <option value="de">Deutsch</option>
+        <option value="en">English</option>
+      </select>
+    </label>
+  </div>
+  <button onclick="exportForLLM(this)" style="padding:7px 16px;font-size:13px;border:1px solid transparent;border-radius:8px;background:#1a3a5c;color:#7ab8f5;cursor:pointer" id="export-btn">
+    Prompt in Zwischenablage kopieren
+  </button>
+  <span id="export-status" style="font-size:11px;color:#555;margin-left:10px"></span>
+</div>
+
+<audio id="player" crossorigin="anonymous" style="display:none"></audio>
+<div id="custom-player" style="display:none;background:#1a1a1a;border-radius:8px;padding:8px 12px;margin-bottom:10px;user-select:none">
+  <div style="display:flex;align-items:center;gap:8px">
+    <button id="pp-btn" onclick="togglePlay()" style="background:none;border:1px solid #444;border-radius:50%;width:26px;height:26px;color:#eee;cursor:pointer;font-size:13px;line-height:26px;text-align:center;flex-shrink:0;padding:0">▶</button>
+    <span id="cur-time" style="font-size:11px;color:#888;min-width:36px;font-variant-numeric:tabular-nums">0:00</span>
+    <div id="prog-bar" style="flex:1;height:4px;background:#2a2a2a;border-radius:2px;cursor:pointer;position:relative" onmousedown="seekStart(event)" ontouchstart="seekStart(event)">
+      <div id="prog-fill" style="height:100%;background:#7ab8f5;border-radius:2px;width:0%;pointer-events:none"></div>
+      <div id="prog-head" style="position:absolute;top:50%;width:10px;height:10px;background:#fff;border-radius:50%;transform:translate(-50%,-50%);left:0%;pointer-events:none;transition:left 0.05s linear"></div>
+    </div>
+    <span id="tot-time" style="font-size:11px;color:#888;min-width:36px;text-align:right;font-variant-numeric:tabular-nums">0:00</span>
+    <button onclick="toggleMute()" id="vol-btn" style="background:none;border:none;color:#666;cursor:pointer;font-size:13px;padding:0;flex-shrink:0">🔊</button>
+  </div>
+</div>
+<div class="row" style="margin-bottom:10px">
+  <span style="font-size:12px;color:#555">Zoom</span>
+  <input type="range" id="zoom-slider" min="0" max="5" step="0.1" value="0" style="flex:1;accent-color:#7ab8f5">
+  <span id="zoom-label" style="font-size:12px;color:#7ab8f5;min-width:32px">1×</span>
+  <button onclick="resetZoom()" style="padding:4px 10px;font-size:11px">Reset</button>
+</div>
+
+<div class="grid g4">
+  <div class="card"><div class="val" id="v-plays">—</div><div class="lbl">Plays</div></div>
+  <div class="card"><div class="val" id="v-likes">—</div><div class="lbl">Likes</div></div>
+  <div class="card"><div class="val" id="v-comments">—</div><div class="lbl">Kommentare</div></div>
+  <div class="card"><div class="val" id="v-ratio">—</div><div class="lbl">Plays / Like</div></div>
+</div>
+<div class="grid g4">
+  <div class="card"><div class="val" id="v-age">—</div><div class="lbl">Alter</div></div>
+  <div class="card"><div class="val" id="v-ppd">—</div><div class="lbl">Plays / Tag</div></div>
+  <div class="card"><div class="val" id="v-model">—</div><div class="lbl">Modell</div></div>
+  <div class="card"><div class="val" id="v-vocal" style="font-size:13px">—</div><div class="lbl">Stimme</div></div>
+
+</div>
+<div class="grid g4">
+  <div class="card"><div class="val" id="v-bpm">—</div><div class="lbl">BPM</div><div class="gauge" id="g-bpm"><div class="gauge-track"></div><div class="gauge-marker" id="gm-bpm"></div></div></div>
+  <div class="card"><div class="val" id="v-dur">—</div><div class="lbl">Dauer</div></div>
+  <div class="card"><div class="val" id="v-loud">—</div><div class="lbl">Lautheit dB</div><div class="gauge" id="g-loud"><div class="gauge-track"></div><div class="gauge-marker" id="gm-loud"></div></div></div>
+  <div class="card"><div class="val" id="v-dyn">—</div><div class="lbl">Dynamik dB</div><div class="gauge" id="g-dyn"><div class="gauge-track"></div><div class="gauge-marker" id="gm-dyn"></div></div></div>
+</div>
+<div class="grid g4">
+  <div class="card"><div class="val" id="v-centroid">—</div><div class="lbl">Centroid Hz</div><div class="gauge" id="g-centroid"><div class="gauge-track"></div><div class="gauge-marker" id="gm-centroid"></div></div></div>
+  <div class="card"><div class="val" id="v-rolloff">—</div><div class="lbl">Rolloff Hz</div><div class="gauge" id="g-rolloff"><div class="gauge-track"></div><div class="gauge-marker" id="gm-rolloff"></div></div></div>
+  <div class="card"><div class="val" id="v-stereo">—</div><div class="lbl">Stereobreite</div><div class="gauge" id="g-stereo"><div class="gauge-track"></div><div class="gauge-marker" id="gm-stereo"></div></div></div>
+  <div class="card"><div class="val" id="v-attack">—</div><div class="lbl">Attack ms</div><div class="gauge" id="g-attack"><div class="gauge-track"></div><div class="gauge-marker" id="gm-attack"></div></div></div>
+</div>
+<div class="grid g4">
+  <div class="card"><div class="val" id="v-key">—</div><div class="lbl">Tonart</div></div>
+  <div class="card"><div class="val" id="v-mode">—</div><div class="lbl">Modus</div></div>
+  <div class="card"><div class="val" id="v-chord-rate">—</div><div class="lbl">Akkordwechsel/s</div><div class="gauge" id="g-chord-rate"><div class="gauge-track"></div><div class="gauge-marker" id="gm-chord-rate"></div></div></div>
+  <div class="card"><div class="val" id="v-note-stab">—</div><div class="lbl">Noten-Stabilität</div><div class="gauge" id="g-note-stab"><div class="gauge-track"></div><div class="gauge-marker" id="gm-note-stab"></div></div></div>
+</div>
+<div class="grid g4">
+  <div class="card"><div class="val" id="v-entropy">—</div><div class="lbl">Spektr. Entropie</div><div class="gauge" id="g-entropy"><div class="gauge-track"></div><div class="gauge-marker" id="gm-entropy"></div></div></div>
+  <div class="card"><div class="val" id="v-inharm">—</div><div class="lbl">Inharmonizität</div><div class="gauge" id="g-inharm"><div class="gauge-track"></div><div class="gauge-marker" id="gm-inharm"></div></div></div>
+  <div class="card"><div class="val" id="v-harmdense">—</div><div class="lbl">Harm. Dichte</div><div class="gauge" id="g-harmdense"><div class="gauge-track"></div><div class="gauge-marker" id="gm-harmdense"></div></div></div>
+  <div class="card"><div class="val" id="v-tilt">—</div><div class="lbl">Spektral Tilt</div><div class="gauge" id="g-tilt"><div class="gauge-track"></div><div class="gauge-marker" id="gm-tilt"></div></div></div>
+</div>
+<div class="grid g4">
+  <div class="card"><div class="val" id="v-texture">—</div><div class="lbl">Textur-Index</div><div class="gauge" id="g-texture"><div class="gauge-track"></div><div class="gauge-marker" id="gm-texture"></div></div></div>
+  <div class="card"><div class="val" id="v-symmetry">—</div><div class="lbl">Energie-Form</div></div>
+</div>
+
+<div class="section" id="instruments-section" style="display:none">
+  <div class="slbl"><span>Instrument-Erkennung <span style="font-size:10px;color:#444">(regelbasiert · heuristisch)</span></span></div>
+  <div id="instruments-wrap" style="display:flex;flex-wrap:wrap;gap:6px;margin-top:4px"></div>
+</div>
+
+<div class="section" id="yamnet-section">
+  <div class="slbl">
+    <span>Instrument-Erkennung (YAMNet ML)</span>
+    <span style="display:flex;align-items:center;gap:8px;flex-wrap:wrap">
+      <label style="font-size:11px;color:#555;display:flex;align-items:center;gap:4px;cursor:pointer">
+        <input type="checkbox" id="yamnet-toggle" checked style="accent-color:#7ab8f5">aktiv
+      </label>
+      <button onclick="probeYamnet()" style="font-size:11px;padding:2px 7px;border:1px solid #333;border-radius:4px;background:transparent;color:#666;cursor:pointer">Probe</button>
+      <span id="yamnet-probe-status" style="font-size:10px;color:#555"></span>
+    </span>
+  </div>
+
+  <!-- Top events raw -->
+  <div id="yamnet-summary" style="font-size:11px;color:#888;margin:4px 0 8px;min-height:16px">YAMNet noch nicht geladen.</div>
+
+  <!-- Control console -->
+  <div id="yamnet-controls" style="display:none;background:#0d0d0d;border-radius:6px;padding:10px 12px;margin-bottom:8px">
+    <div style="display:flex;gap:16px;flex-wrap:wrap;align-items:flex-start">
+
+      <!-- Threshold slider -->
+      <div style="min-width:160px">
+        <div style="font-size:10px;color:#555;margin-bottom:4px">Min-Score (Schwellwert)</div>
+        <div style="display:flex;align-items:center;gap:6px">
+          <input type="range" id="yn-threshold" min="1" max="30" value="2" step="1"
+            style="width:100px;accent-color:#7ab8f5" oninput="yamnetUpdateControls()">
+          <span id="yn-threshold-lbl" style="font-size:11px;color:#7ab8f5;min-width:30px">0.02</span>
+        </div>
+      </div>
+
+      <!-- Row height -->
+      <div style="min-width:140px">
+        <div style="font-size:10px;color:#555;margin-bottom:4px">Zeilenhöhe</div>
+        <div style="display:flex;align-items:center;gap:6px">
+          <input type="range" id="yn-rowheight" min="10" max="40" value="17" step="1"
+            style="width:90px;accent-color:#7ab8f5" oninput="yamnetUpdateControls()">
+          <span id="yn-rowheight-lbl" style="font-size:11px;color:#7ab8f5;min-width:24px">17</span>
+        </div>
+      </div>
+
+      <!-- Color scale -->
+      <div style="min-width:140px">
+        <div style="font-size:10px;color:#555;margin-bottom:4px">Farbverstärkung</div>
+        <div style="display:flex;align-items:center;gap:6px">
+          <input type="range" id="yn-boost" min="1" max="30" value="8" step="1"
+            style="width:90px;accent-color:#7ab8f5" oninput="yamnetUpdateControls()">
+          <span id="yn-boost-lbl" style="font-size:11px;color:#7ab8f5;min-width:24px">5×</span>
+        </div>
+      </div>
+    </div>
+
+    <!-- Group checkboxes -->
+    <div style="margin-top:8px">
+      <div style="font-size:10px;color:#555;margin-bottom:4px">Angezeigte Gruppen</div>
+      <div id="yn-group-checks" style="display:flex;flex-wrap:wrap;gap:6px 12px"></div>
+    </div>
+
+    <!-- Raw top events -->
+    <div style="margin-top:8px">
+      <div style="font-size:10px;color:#555;margin-bottom:4px">Rohe Top-Events (alle erkannten Labels)</div>
+      <div id="yn-raw-events" style="font-size:10px;color:#666;line-height:1.6"></div>
+    </div>
+  </div>
+
+  <div class="chart-outer">
+    <canvas id="yamnet-canvas" style="background:#0a0a0a" class="chart-pending">berechne...</canvas>
+    <div class="playhead" id="ph-yamnet"></div>
+  </div>
+</div>
+
+<div class="section">
+  <div class="slbl"><span>Song-Struktur</span></div>
+  <div id="struct-wrap"></div>
+</div>
+<div class="section"><div class="slbl">Lautheit über Zeit — RMS (Effektivwert) in Dezibel</div>
+  <div class="chart-outer"><canvas id="lufs-canvas" style="height:80px;background:#0a0a0a" class="chart-pending">berechne…</canvas><div class="playhead" id="ph-lufs"></div></div>
+</div>
+<div class="section"><div class="slbl">Signalenergie über Zeit — orange=aufbauend · blau=abklingend · grau=gleichbleibend</div>
+  <div class="chart-outer"><canvas id="energy-canvas" style="height:70px;background:#0a0a0a" class="chart-pending">berechne…</canvas><div class="playhead" id="ph-energy"></div></div>
+</div>
+<div class="section"><div class="slbl">Dynamikumfang (Crestfaktor) — hoch=lebendig · niedrig=matschig/komprimiert</div>
+  <div class="chart-outer"><canvas id="crest-canvas" style="height:70px;background:#0a0a0a" class="chart-pending">berechne…</canvas><div class="playhead" id="ph-crest"></div></div>
+</div>
+<div class="section"><div class="slbl">Impulsdichte (Onsets/s) — wie viele Anschläge pro Sekunde</div>
+  <div class="chart-outer"><canvas id="onset-canvas" style="height:70px;background:#0a0a0a" class="chart-pending">berechne…</canvas><div class="playhead" id="ph-onset"></div></div>
+</div>
+<div class="section"><div class="slbl">Tempo über Zeit (BPM) — orange=IOI Median · rotbraun=IOI Peaks · grau=Autokorrelation</div>
+  <div class="chart-outer"><canvas id="bpmcurve-canvas" style="height:80px;background:#0a0a0a" class="chart-pending">berechne…</canvas><div class="playhead" id="ph-bpmcurve"></div></div>
+</div>
+<div class="section"><div class="slbl">Stereopanorama — oben=linker Kanal · unten=rechter Kanal · dunkel=Bass · hell=Höhen</div>
+  <div class="chart-outer"><canvas id="stereo-canvas" style="height:192px;background:#0a0a0a" class="chart-pending">berechne…</canvas><div class="playhead" id="ph-stereo"></div></div>
+</div>
+
+<div class="section" style="background:transparent;padding:6px 0"><div class="slbl" style="padding:0 12px">Stimmanalyse — <span style="color:#ff8c00">▲ weiblich</span> · <span style="color:#5090e0">▼ männlich</span> · Hintergrund=Formantaktivität</div>
+  <div class="chart-outer"><canvas id="vocal-canvas" style="height:80px;background:transparent" class="chart-pending">berechne…</canvas><div class="playhead" id="ph-vocal"></div></div>
+</div>
+<div class="section"><div class="slbl">Klangtonalität (Harmonicity) — <span style="color:#d07030">▲ Klang/tonal</span> · <span style="color:#3070b0">▼ Krach/noisig</span> · <span style="color:#b464dc">— Entropie</span></div>
+  <div class="chart-outer"><canvas id="harm-canvas" style="height:80px;background:#0a0a0a" class="chart-pending">berechne…</canvas><div class="playhead" id="ph-harm"></div></div>
+</div>
+<div class="section"><div class="slbl">Klangveränderung (Spektrale Fluktuation) — Helligkeit = Änderungsrate pro Frequenzband · Bass unten · Höhen oben</div>
+  <div class="chart-outer"><canvas id="flux-canvas" style="height:160px;background:#0a0a0a" class="chart-pending">berechne…</canvas><div class="playhead" id="ph-flux"></div></div>
+</div>
+
+<div class="section"><div class="slbl">Klangrauheit (Inharmonizität) — niedrig=rein/synthetisch · hoch=FM-artig/verstimmt</div>
+  <div class="chart-outer"><canvas id="inharm-canvas" style="height:70px;background:#0a0a0a" class="chart-pending">berechne…</canvas><div class="playhead" id="ph-inharm"></div></div>
+</div>
+
+<div class="section"><div class="slbl">Tonhöhenverlauf + Noten-Stabilität (Piano-Roll) — hell=lange Noten · dunkel=Ornamente/Glissandi</div>
+  <div class="chart-outer"><canvas id="pitch-canvas" style="height:120px;background:#0a0a0a" class="chart-pending">berechne…</canvas><div class="playhead" id="ph-pitch"></div></div>
+</div>
+<div class="section"><div class="slbl">Frequenzgewicht (Spektral Tilt) — orange=bassig/warm · blau=hell/luftig</div>
+  <div class="chart-outer"><canvas id="tilt-canvas" style="height:70px;background:#0a0a0a" class="chart-pending">berechne…</canvas><div class="playhead" id="ph-tilt"></div></div>
+</div>
+<div class="section"><div class="slbl">Obertonreichtum (Harmonische Dichte) — Anzahl aktiver Partialtöne</div>
+  <div class="chart-outer"><canvas id="harmdense-canvas" style="height:70px;background:#0a0a0a" class="chart-pending">berechne…</canvas><div class="playhead" id="ph-harmdense"></div></div>
+</div>
+<div class="section"><div class="slbl">Kumulierte Tonverteilung (Chroma) — Linienbreite = Intensität · Oktaven addiert</div>
+  <div class="chart-outer"><canvas id="chroma-canvas" style="height:160px;background:#0a0a0a" class="chart-pending">berechne…</canvas><div class="playhead" id="ph-chroma"></div></div>
+</div>
+<div class="section"><div class="slbl">Spektrogramm — lokal Z-normiert · dunkel=Stille · hell=Signal</div>
+  <div class="chart-outer"><canvas id="spectro-canvas" style="height:360px;background:#0a0a0a" class="chart-pending">berechne…</canvas><div class="playhead" id="ph-spectro"></div></div>
+</div>
+<div class="section"><div class="slbl">Stereo-Spektrogramm — orange=links dominant · blau=rechts dominant · grau=zentral</div>
+  <div class="chart-outer"><canvas id="stereospectro-canvas" style="height:360px;background:#0a0a0a" class="chart-pending">berechne…</canvas><div class="playhead" id="ph-stereospectro"></div></div>
+</div>
+<div class="section"><div class="slbl">Frequenzspektrum — live</div>
+  <div class="chart-outer"><canvas id="freq-canvas" style="height:120px;background:#0a0a0a"></canvas></div>
+</div>
+
+
+<script>
+var audioCtx=null, mp3Cache={}, songDuration=0;
+var currentMeta=null; // stores song metadata for export
+
+function exportForLLM(btn){
+  var len=document.getElementById('export-length').value;
+  var lang=document.getElementById('export-lang').value;
+  var langLabel=lang==='de'?'Deutsch':'English';
+  var charTarget=len==='250'?'ca. 250 Zeichen':len==='350'?'ca. 350 Zeichen':'400–500 Zeichen';
+
+  // Song data
+  var title=currentMeta&&currentMeta.title?currentMeta.title.replace(/\s+by\s+[^|]+$/i,'').trim():'Unbekannt';
+  var author=currentMeta&&currentMeta.author?currentMeta.author:'';
+  var prompt=currentMeta&&currentMeta.prompt?currentMeta.prompt:'';
+  var styles=currentMeta&&currentMeta.tags?currentMeta.tags.join(', '):'';
+  var lyrics=currentMeta&&currentMeta.lyrics?currentMeta.lyrics:'';
+
+  // Key analysis values only
+  function v(id){var el=document.getElementById(id);return el?el.textContent.trim():'';}
+  var bpm=v('v-bpm'), key=v('v-key'), mode=v('v-mode');
+  var voice=v('v-vocal'), dyn=v('v-dyn'), shape=v('v-symmetry');
+  var tilt=v('v-tilt'), centroid=v('v-centroid');
+
+  var text='';
+  text+='Schreibe einen Kommentar für diesen Suno-Song.\n';
+  text+='Sprache: '+langLabel+'. Länge: '+charTarget+'.\n\n';
+
+  text+='=== SONG ===\n';
+  text+='Titel: '+title+'\n';
+  if(author)text+='Erstellt von: '+author+'\n';
+  if(styles)text+='Style: '+styles+'\n';
+  if(prompt)text+='Generierungs-Prompt: '+prompt+'\n';
+  text+='\n';
+
+  text+='=== ANALYSE ===\n';
+  text+='BPM: '+bpm+' | Tonart: '+key+' '+mode+'\n';
+  text+='Stimme: '+voice+'\n';
+  text+='Dynamik: '+dyn+' dB | Energieform: '+shape+'\n';
+  text+='Frequenzgewicht: '+tilt+' | Spektralcentroid: '+centroid+' Hz\n';
+  text+='\n';
+
+  if(lyrics){
+    text+='=== TEXT ===\n'+lyrics+'\n\n';
+  }
+
+  text+='=== MEINE PERSPEKTIVE ===\n';
+  text+='Ich bin selbst Songwriter und Produzent auf Suno, vor allem im Bereich NDH/Industrial und Quiet Storm, höre aber auch gern Sachen, die stilistisch ganz woanders liegen.\n';
+  text+='Ich höre aufmerksam zu und nehme Arrangement, Dynamik, Spannungsbogen und Produktionsentscheidungen meist sofort mit. Trotzdem schreibe ich keine Technik-Kommentare, sondern eher kurze Reaktionen, die zeigen, was bei mir angekommen ist.\n';
+  text+='Mein Stil ist direkt und unaufgeregt, aber offen, zugewandt und ehrlich interessiert. Ich mag keine leeren Floskeln und kein übertriebenes Lob, aber ich benenne gern konkret, was funktioniert, was hängen bleibt oder was ein Stück besonders macht.\n';
+  text+='Gut sind Kommentare mit einer greifbaren Beobachtung zu Lyrics, Komposition, Atmosphäre oder Produktion. Gern auch mit einer offenen Frage, wenn sie sich natürlich ergibt. Nicht zu technisch, sondern menschlich und nah am Hörerlebnis.\n';
+  text+='Der Kommentar soll klingen wie von jemandem, der wirklich hingehört hat, Musik selbst macht und nicht nur höflich etwas Nettes dalässt.\n';
+
+  // Copy
+  try{
+    navigator.clipboard.writeText(text).then(function(){
+      document.getElementById('export-status').textContent='✓ Kopiert';
+      setTimeout(function(){document.getElementById('export-status').textContent='';},2000);
+    }).catch(fallback);
+  }catch(e){fallback();}
+
+  function fallback(){
+    var ta=document.createElement('textarea');
+    ta.value=text;ta.style.cssText='position:fixed;left:-9999px';
+    document.body.appendChild(ta);ta.select();
+    try{document.execCommand('copy');}catch(e){}
+    document.body.removeChild(ta);
+    document.getElementById('export-status').textContent='✓ Kopiert';
+    setTimeout(function(){document.getElementById('export-status').textContent='';},2000);
+  }
+}
+var player=document.getElementById('player');
+var phIds=['lufs','energy','onset','bpm','stereo','vocal','crest','flux','harm','pitch','tilt','harmdense','chroma','spectro','stereospectro','entropy','inharm','yamnet'];
+
+// Custom player controls
+function togglePlay(){
+  if(!player.src)return;
+  var doPlay=player.paused;
+  var resume=audioCtx&&audioCtx.state==='suspended'?audioCtx.resume():Promise.resolve();
+  resume.then(function(){
+    if(doPlay){
+      var p=player.play();
+      if(p&&p.catch)p.catch(function(e){console.warn('play() failed:',e);});
+    } else {
+      player.pause();
+    }
+  });
+}
+function toggleMute(){
+  player.muted=!player.muted;
+  document.getElementById('vol-btn').textContent=player.muted?'🔇':'🔊';
+}
+function updatePlayerUI(){
+  var pct=songDuration>0?player.currentTime/songDuration:0;
+  document.getElementById('prog-fill').style.width=(pct*100)+'%';
+  document.getElementById('prog-head').style.left=(pct*100)+'%';
+  document.getElementById('cur-time').textContent=fmt(player.currentTime);
+  document.getElementById('pp-btn').textContent=player.paused?'▶':'⏸';
+}
+// RAF loop for smooth progress bar — runs independently of timeupdate
+(function rafProgress(){
+  requestAnimationFrame(rafProgress);
+  if(!player.paused&&songDuration>0)updatePlayerUI();
+})();
+var _seeking=false;
+function seekStart(e){
+  _seeking=true;seekMove(e);
+  function onMove(ev){if(_seeking)seekMove(ev);}
+  function onUp(){_seeking=false;
+    document.removeEventListener('mousemove',onMove);document.removeEventListener('mouseup',onUp);
+    document.removeEventListener('touchmove',onMove);document.removeEventListener('touchend',onUp);}
+  document.addEventListener('mousemove',onMove);document.addEventListener('mouseup',onUp);
+  document.addEventListener('touchmove',onMove,{passive:false});document.addEventListener('touchend',onUp);
+}
+function seekMove(e){
+  if(!songDuration)return;
+  e.preventDefault&&e.preventDefault();
+  var bar=document.getElementById('prog-bar');
+  var rect=bar.getBoundingClientRect();
+  var clientX=e.touches?e.touches[0].clientX:e.clientX;
+  var pct=Math.max(0,Math.min(1,(clientX-rect.left)/rect.width));
+  player.currentTime=pct*songDuration;
+  updatePlayerUI();
+}
+player.addEventListener('timeupdate',updatePlayerUI);
+player.addEventListener('play',function(){document.getElementById('pp-btn').textContent='⏸';if(audioCtx&&audioCtx.state==='suspended')audioCtx.resume();});
+player.addEventListener('pause',function(){document.getElementById('pp-btn').textContent='▶';});
+player.addEventListener('loadedmetadata',function(){
+  document.getElementById('tot-time').textContent=fmt(player.duration);
+  document.getElementById('custom-player').style.display='block';
+  updatePlayerUI();
+});
+
+function setStatus(msg){document.getElementById('status').textContent=msg;}
+function setProgress(pct){document.getElementById('progress-bar').style.width=pct+'%';}
+function extractUUID(s){var m=s.trim().match(/[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}/);return m?m[0]:null;}
+function fmt(s){var m=Math.floor(s/60),ss=Math.round(s%60);return m+':'+(ss<10?'0':'')+ss;}
+
+// zoom state
+var zoomLevel=1; // 1x to 16x
+var viewStart=0; // fraction 0..1
+var viewEnd=1;   // fraction 0..1
+
+function getView(){return {start:viewStart,end:viewEnd,dur:(viewEnd-viewStart)*songDuration};}
+
+function updateZoom(){
+  var sliderVal=parseFloat(document.getElementById('zoom-slider').value);
+  zoomLevel=Math.pow(2,sliderVal); // 1x..32x
+  document.getElementById('zoom-label').textContent=zoomLevel.toFixed(1).replace('.0','')+'×';
+  centerViewOnPlayhead();
+  redrawAllCharts();
+}
+
+function centerViewOnPlayhead(){
+  if(!songDuration)return;
+  var winSize=1/zoomLevel;
+  var center=player.currentTime/songDuration;
+  viewStart=Math.max(0,center-winSize/2);
+  viewEnd=viewStart+winSize;
+  if(viewEnd>1){viewEnd=1;viewStart=Math.max(0,1-winSize);}
+}
+
+function resetZoom(){
+  document.getElementById('zoom-slider').value=0;
+  zoomLevel=1;viewStart=0;viewEnd=1;
+  document.getElementById('zoom-label').textContent='1×';
+  redrawAllCharts();
+}
+
+document.getElementById('zoom-slider').oninput=updateZoom;
+
+// redraw all charts with current view
+
+// ===== YAMNET ML INSTRUMENT RECOGNITION =====
+var yamnetModel=null, yamnetClassNames=null, yamnetTfReady=false;
+
+var YAMNET_CFG={
+  tfjsUrl:'https://cdn.jsdelivr.net/npm/@tensorflow/tfjs@4.22.0/dist/tf.min.js',
+  modelUrl:'https://dogbarkingdetector.com/model/model.json',
+  classMapUrl:'https://dogbarkingdetector.com/model/assets/yamnet_class_map.csv',
+  targetSR:16000,
+  frameSec:0.96,
+  hopSec:0.48,
+  maxFrames:280,
+  minScore:0.02,
+  topK:15
+};
+
+// YAMNET_GROUPS: only leaf nodes or near-leaf nodes from AudioSet ontology
+// Parent nodes (Guitar, Singing, Percussion etc.) are intentionally excluded
+// to avoid double-counting with their children
+// Exception: parent used as proxy when no leaf children are in top scores
+var YAMNET_GROUPS={
+  stimme_maennlich:[
+    'Male singing','Male speech, man speaking'
+  ],
+  stimme_weiblich:[
+    'Female singing','Female speech, woman speaking','Child singing','Child speech, kid speaking'
+  ],
+  stimme_andere:[
+    'Choir','Yodeling','Rapping','Humming','Beatboxing','A capella','Mantra','Lullaby'
+  ],
+  gitarre_elektrisch:[
+    'Electric guitar','Steel guitar, slide guitar','Tapping (guitar technique)','Distortion'
+  ],
+  gitarre_akustisch:[
+    'Acoustic guitar'
+  ],
+  gitarre_sonstig:[
+    'Banjo','Ukulele','Mandolin','Sitar','Kora','Lute','Shamisen','Oud'
+  ],
+  bass:[
+    'Bass guitar','Electric bass guitar','Double bass'
+  ],
+  klavier:[
+    'Piano','Electric piano','Harpsichord','Clavinet'
+  ],
+  orgel_keys:[
+    'Organ','Electronic organ','Hammond organ','Accordion','Melodica'
+  ],
+  synthesizer:[
+    'Synthesizer','Theremin','Sampler'
+  ],
+  schlagzeug:[
+    'Snare drum','Bass drum','Rimshot','Drum roll',
+    'Hi-hat','Crash cymbal','Ride cymbal','Tom-tom','Cowbell',
+    'Drum machine'
+  ],
+  percussion:[
+    'Timbales','Conga','Bongo','Maracas','Claves',
+    'Tambourine','Clapping','Finger snapping','Castanets',
+    'Gong','Tabla','Timpani','Marimba, xylophone','Vibraphone','Glockenspiel'
+  ],
+  streicher:[
+    'Violin, fiddle','Cello','Viola','Pizzicato'
+  ],
+  blaeser_blech:[
+    'Trumpet','Cornet','Bugle','French horn','Trombone','Euphonium','Tuba'
+  ],
+  blaeser_holz:[
+    'Flute','Piccolo','Oboe','Clarinet','Saxophone','Bassoon','Bagpipes','Didgeridoo'
+  ]
+};
+
+// Parent nodes used as fallback proxy when leaf scores are near zero
+// If sum of leaf children < this threshold, add parent score to group
+var YAMNET_PARENT_PROXY={
+  gitarre_elektrisch:['Guitar','Plucked string instrument'],
+  gitarre_akustisch:['Guitar'],
+  bass:['Guitar'],
+  klavier:['Keyboard (musical)'],
+  orgel_keys:['Keyboard (musical)'],
+  synthesizer:['Keyboard (musical)'],
+  schlagzeug:['Drum kit','Drum','Percussion','Cymbal'],
+  percussion:['Percussion'],
+  streicher:['Bowed string instrument','String instrument'],
+  blaeser_blech:['Brass instrument'],
+  blaeser_holz:['Wind instrument, woodwind instrument'],
+  stimme_maennlich:['Singing','Vocal music'],
+  stimme_weiblich:['Singing','Vocal music'],
+  stimme_andere:['Singing','Choir','Vocal music']
+};
+
+function initYamnetAccumulator(){
+  var acc={};
+  Object.keys(YAMNET_GROUPS).forEach(function(k){acc[k]=0;});
+  return acc;
+}
+
+async function loadScriptOnce(url,flagName){
+  if(window[flagName])return;
+  await new Promise(function(resolve,reject){
+    var existing=document.querySelector('script[data-dyn="'+flagName+'"]');
+    if(existing){existing.addEventListener('load',resolve,{once:true});existing.addEventListener('error',reject,{once:true});return;}
+    var s=document.createElement('script');
+    s.src=url;s.async=true;s.dataset.dyn=flagName;
+    s.onload=function(){window[flagName]=true;resolve();};
+    s.onerror=function(){reject(new Error('Script nicht ladbar: '+url));};
+    document.head.appendChild(s);
+  });
+}
+
+async function ensureTfjs(){
+  if(window.tf&&window.tf.tensor1d){yamnetTfReady=true;return window.tf;}
+  await loadScriptOnce(YAMNET_CFG.tfjsUrl,'__tfjsLoaded');
+  yamnetTfReady=!!(window.tf&&window.tf.tensor1d);
+  if(!yamnetTfReady)throw new Error('TensorFlow.js wurde geladen, aber tf ist nicht verfügbar');
+  try{await tf.ready();}catch(e){}
+  return window.tf;
+}
+
+async function fetchText(url){
+  var r=await fetch(url,{mode:'cors',cache:'force-cache'});
+  if(!r.ok)throw new Error('Fetch fehlgeschlagen: '+url+' ('+r.status+')');
+  return await r.text();
+}
+
+function parseYamnetClassMap(csv){
+  return csv.trim().split(/\r?\n/).slice(1).map(function(line){
+    var parts=line.match(/(?:"([^"]*)"|([^,]+))/g)||[];
+    var clean=parts.map(function(p){return p.replace(/^"|"$/g,'').trim();});
+    return clean[2]||clean[1]||clean[0]||'';
+  });
+}
+
+async function ensureYamnetResources(){
+  await ensureTfjs();
+  if(!yamnetClassNames){
+    var csv=await fetchText(YAMNET_CFG.classMapUrl);
+    yamnetClassNames=parseYamnetClassMap(csv);
+  }
+  if(!yamnetModel){
+    yamnetModel=await tf.loadGraphModel(YAMNET_CFG.modelUrl,{fromTFHub:false});
+  }
+}
+
+async function extractYamnetScores(out){
+  var list=[];
+  if(Array.isArray(out))list=out;
+  else if(out&&typeof out==='object'&&!(out instanceof tf.Tensor))list=Object.values(out);
+  else if(out)list=[out];
+  var scoreTensor=list.find(function(t){return t&&t.shape&&t.shape[t.shape.length-1]===521;})||list[0];
+  if(!scoreTensor)throw new Error('Keine Scores im YAMNet-Output');
+  var arr=await scoreTensor.array();
+  while(Array.isArray(arr)&&Array.isArray(arr[0]))arr=arr[0];
+  return arr;
+}
+
+function disposeYamnetOutputs(out){
+  if(Array.isArray(out))out.forEach(function(t){try{t.dispose&&t.dispose();}catch(e){}});
+  else if(out&&typeof out==='object'&&!(out instanceof tf.Tensor))Object.values(out).forEach(function(t){try{t.dispose&&t.dispose();}catch(e){}});
+  else if(out&&out.dispose)try{out.dispose();}catch(e){}
+}
+
+function resampleLinear(input,srcRate,dstRate){
+  if(srcRate===dstRate)return new Float32Array(input);
+  var ratio=srcRate/dstRate;
+  var outLen=Math.max(1,Math.round(input.length/ratio));
+  var out=new Float32Array(outLen);
+  for(var i=0;i<outLen;i++){
+    var pos=i*ratio;
+    var lo=Math.floor(pos),hi=Math.min(lo+1,input.length-1);
+    out[i]=input[lo]+(pos-lo)*(input[hi]-input[lo]);
+  }
+  return out;
+}
+
+function inferYamnetGroups(label){
+  var low=label.toLowerCase();
+  var out=[];
+  Object.keys(YAMNET_GROUPS).forEach(function(group){
+    var hit=YAMNET_GROUPS[group].some(function(token){
+      var tlow=token.toLowerCase();
+      // exact match OR label contains token OR token contains label
+      return low===tlow || low.indexOf(tlow)>=0 || tlow.indexOf(low)>=0;
+    });
+    if(hit)out.push(group);
+  });
+  return out;
+}
+
+// Labels that are purely generic parent nodes — never map to any group directly
+var YAMNET_SKIP_LABELS=[
+  'music','musical instrument','musical ensemble','sound','audio','silence',
+  'inside small room','outside urban','environmental noise',
+  'guitar','singing','speech','percussion','drum','cymbal',
+  'string instrument','plucked string instrument','bowed string instrument',
+  'brass instrument','wind instrument, woodwind instrument','keyboard (musical)',
+  'vocal music',
+  // genre parent nodes — too broad, children only
+  'electronic music','rock music','pop music','folk music','jazz',
+  'blues','classical music','country music','r&b and soul','hip hop music',
+  'dance music','music genre','exciting music','angry music','happy music',
+  'sad music','tender music','scary music','funny music',
+  // genre leaf nodes — all ignored
+  'house music','techno','trance music','dubstep','drum and bass',
+  'ambient music','electronic dance music','disco','new-age music','electronica',
+  'heavy metal','punk rock','grunge','industrial music','psychedelic rock',
+  'soul music','funk','reggae','gospel music'
+];
+
+function isSkipLabel(label){
+  var low=label.toLowerCase();
+  return YAMNET_SKIP_LABELS.indexOf(low)>=0;
+}
+
+function collapseYamnetScores(scores){
+  if(!yamnetClassNames||!scores)return initYamnetAccumulator();
+
+  // Build label→score lookup for proxy fallback
+  var labelScore={};
+  for(var i=0;i<scores.length&&i<yamnetClassNames.length;i++){
+    labelScore[yamnetClassNames[i].toLowerCase()]=+scores[i]||0;
+  }
+
+  var groups=initYamnetAccumulator();
+
+  // Pass 1: accumulate leaf node scores
+  for(var i=0;i<scores.length&&i<yamnetClassNames.length;i++){
+    var s=+scores[i]||0;
+    if(s<YAMNET_CFG.minScore)continue;
+    var label=yamnetClassNames[i];
+    if(isSkipLabel(label))continue;
+    inferYamnetGroups(label).forEach(function(g){groups[g]+=s;});
+  }
+
+  // Pass 2: parent proxy fallback — if a group got almost nothing from leaves,
+  // check if a parent node has signal and add it as proxy
+  var PROXY_THRESHOLD=0.05; // if leaf sum < this, use parent
+  Object.keys(YAMNET_PARENT_PROXY).forEach(function(g){
+    if((groups[g]||0)>=PROXY_THRESHOLD)return; // leaves already have signal
+    var parentLabels=YAMNET_PARENT_PROXY[g]||[];
+    var parentScore=0;
+    parentLabels.forEach(function(pl){
+      parentScore=Math.max(parentScore,labelScore[pl.toLowerCase()]||0);
+    });
+    if(parentScore>YAMNET_CFG.minScore){
+      // distribute parent score across this group with discount factor
+      groups[g]+=parentScore*0.5;
+    }
+  });
+
+  return groups;
+}
+
+function inferYamnetGroups(label){
+  var low=label.toLowerCase();
+  var out=[];
+  Object.keys(YAMNET_GROUPS).forEach(function(group){
+    var hit=YAMNET_GROUPS[group].some(function(token){
+      var tlow=token.toLowerCase();
+      // exact match OR label contains token OR token contains label
+      return low===tlow || low.indexOf(tlow)>=0 || tlow.indexOf(low)>=0;
+    });
+    if(hit)out.push(group);
+  });
+  return out;
+}
+
+// Labels that are too generic and swamp specific instrument scores
+var YAMNET_GENERIC_LABELS=['music','musical instrument','musical ensemble',
+  'speech','sound','audio','noise','silence','inside small room','outside urban'];
+
+function isGenericYamnetLabel(label){
+  var low=label.toLowerCase();
+  return YAMNET_GENERIC_LABELS.some(function(g){return low===g;});
+}
+
+function collapseYamnetScores(scores){
+  var groups=initYamnetAccumulator();
+  if(!yamnetClassNames||!scores)return groups;
+  // First pass: sum of non-generic scores for normalization
+  var specificSum=0;
+  for(var i=0;i<scores.length&&i<yamnetClassNames.length;i++){
+    var s=+scores[i]||0;
+    if(s>=YAMNET_CFG.minScore&&!isGenericYamnetLabel(yamnetClassNames[i]))specificSum+=s;
+  }
+  // Second pass: accumulate, boost specific scores if genericsum dominates
+  var boostFactor=specificSum<0.1?3.0:1.0;
+  for(var i=0;i<scores.length&&i<yamnetClassNames.length;i++){
+    var s=+scores[i]||0;
+    if(s<YAMNET_CFG.minScore)continue;
+    if(isGenericYamnetLabel(yamnetClassNames[i]))continue; // skip generic
+    var hits=inferYamnetGroups(yamnetClassNames[i]);
+    hits.forEach(function(g){groups[g]+=s*boostFactor;});
+  }
+  return groups;
+}
+
+function topYamnetLabels(scores,k,minScore){
+  var arr=[];
+  if(!yamnetClassNames||!scores)return arr;
+  for(var i=0;i<scores.length&&i<yamnetClassNames.length;i++){
+    var s=+scores[i]||0;
+    if(s>=minScore)arr.push({label:yamnetClassNames[i],score:s});
+  }
+  return arr.sort(function(a,b){return b.score-a.score;}).slice(0,k);
+}
+
+async function runYamnetFrame(frame){
+  var out, tensors=[];
+  try{
+    var t1=tf.tensor1d(frame);tensors.push(t1);
+    try{
+      out=yamnetModel.predict?yamnetModel.predict(t1):await yamnetModel.executeAsync(t1);
+    }catch(e1){
+      var t2=tf.tensor2d(frame,[1,frame.length]);tensors.push(t2);
+      out=yamnetModel.predict?yamnetModel.predict(t2):await yamnetModel.executeAsync(t2);
+    }
+    var scores=await extractYamnetScores(out);
+    disposeYamnetOutputs(out);
+    return scores;
+  }finally{
+    tensors.forEach(function(t){try{t.dispose();}catch(e){}});
+  }
+}
+
+function clearYamnetCanvas(){
+  var c=document.getElementById('yamnet-canvas');
+  if(!c)return;
+  var ctx=c.getContext('2d');
+  ctx.clearRect(0,0,c.width,c.height);
+  c.classList.remove('chart-ready');
+  c.classList.add('chart-pending');
+}
+
+async function probeYamnet(){
+  var out=document.getElementById('yamnet-probe-status');
+  if(out)out.textContent='prüfe...';
+  var parts=[];
+  try{await ensureTfjs();parts.push('tfjs ok');}catch(e){parts.push('tfjs FEHLER: '+e.message);}
+  try{
+    var r=await fetch(YAMNET_CFG.modelUrl,{mode:'cors',cache:'no-store'});
+    parts.push(r.ok?'model ok':'model HTTP '+r.status);
+  }catch(e){parts.push('model FEHLER: '+e.message);}
+  try{
+    var r2=await fetch(YAMNET_CFG.classMapUrl,{mode:'cors',cache:'no-store'});
+    parts.push(r2.ok?'classmap ok':'classmap HTTP '+r2.status);
+  }catch(e){parts.push('classmap FEHLER: '+e.message);}
+  if(out)out.textContent=parts.join(' | ');
+}
+
+function mixToMono(buf){
+  var ch0=buf.getChannelData(0);
+  var ch1=buf.numberOfChannels>1?buf.getChannelData(1):ch0;
+  var mono=new Float32Array(ch0.length);
+  for(var i=0;i<mono.length;i++)mono[i]=0.5*(ch0[i]+ch1[i]);
+  return mono;
+}
+
+async function runYamnet(buf){
+  var enabled=document.getElementById('yamnet-toggle');
+  if(enabled&&!enabled.checked){
+    var ys=document.getElementById('yamnet-summary');
+    if(ys)ys.textContent='YAMNet deaktiviert.';
+    clearYamnetCanvas();
+    return;
+  }
+  try{
+    var ys=document.getElementById('yamnet-summary');
+    if(ys)ys.textContent='Lade TensorFlow.js / YAMNet...';
+    await ensureYamnetResources();
+    if(ys)ys.textContent='Analysiere Instrument-/Ereignisgruppen...';
+    var mono=mixToMono(buf);
+    var audio16=resampleLinear(mono,buf.sampleRate,YAMNET_CFG.targetSR);
+    var frameLen=Math.round(YAMNET_CFG.frameSec*YAMNET_CFG.targetSR);
+    var hop=Math.max(1,Math.round(YAMNET_CFG.hopSec*YAMNET_CFG.targetSR));
+    var rawFrames=Math.max(1,Math.floor((audio16.length-frameLen)/hop)+1);
+    var stride=rawFrames>YAMNET_CFG.maxFrames?Math.ceil(rawFrames/YAMNET_CFG.maxFrames):1;
+    var timeline=[];
+    var topLabels={};
+    for(var fi=0,idx=0;idx+frameLen<=audio16.length;idx+=hop*stride,fi++){
+      var frame=audio16.subarray(idx,idx+frameLen);
+      var scores=await runYamnetFrame(frame);
+      if(!scores)continue;
+      var groups=collapseYamnetScores(scores);
+      timeline.push(groups);
+      topYamnetLabels(scores,YAMNET_CFG.topK,YAMNET_CFG.minScore).forEach(function(item){
+        topLabels[item.label]=(topLabels[item.label]||0)+item.score;
+      });
+      if(fi%6===0){
+        var pct=Math.round(100*Math.min(1,(idx+frameLen)/audio16.length));
+        if(ys)ys.textContent='YAMNet analysiert... '+pct+'%';
+        await tf.nextFrame();
+      }
+    }
+    if(!timeline.length){
+      if(ys)ys.textContent='YAMNet lieferte keine auswertbaren Frames.';
+      clearYamnetCanvas();return;
+    }
+    var mean=initYamnetAccumulator();
+    timeline.forEach(function(row){Object.keys(mean).forEach(function(k){mean[k]+=row[k]||0;});});
+    Object.keys(mean).forEach(function(k){mean[k]/=timeline.length;});
+    var topGroups=Object.entries(mean).sort(function(a,b){return b[1]-a[1];}).slice(0,5);
+    var topEvents=Object.entries(topLabels).sort(function(a,b){return b[1]-a[1];}).slice(0,4);
+    if(ys)ys.innerHTML='<span style="color:#7ab8f5">Gruppen:</span> '+topGroups.map(function(x){return x[0]+' '+(x[1]*100).toFixed(0)+'%';}).join(' · ')+'<br><span style="color:#7ab8f5">Top-Events:</span> '+(topEvents.length?topEvents.map(function(x){return x[0]+' '+(x[1]/timeline.length*100).toFixed(0)+'%';}).join(' · '):'—');
+    window._chartData.yamnet={timeline:timeline,duration:buf.duration,groups:Object.keys(YAMNET_GROUPS),mean:mean,topLabels:topLabels};
+    document.getElementById('yamnet-section').style.display='block';
+    yamnetInitControls();
+    drawYamnetTimeline(timeline,buf.duration,Object.keys(YAMNET_GROUPS));
+  }catch(e){
+    console.error('YAMNet error',e);
+    var ys=document.getElementById('yamnet-summary');
+    if(ys)ys.textContent='YAMNet-Fehler: '+e.message;
+    clearYamnetCanvas();
+  }
+}
+
+function drawYamnetTimeline(timeline,duration,groups){
+  var c=document.getElementById('yamnet-canvas');
+  if(!c||!timeline||!timeline.length)return;
+  // use active groups from checkboxes
+  var activeGroups=yamnetGetActiveGroups();
+  var labels=activeGroups.length?activeGroups:(groups&&groups.length?groups:Object.keys(YAMNET_GROUPS));
+  var rowH=yamnetGetRowHeight();
+  var boost=yamnetGetBoost();
+  var h=Math.max(60,labels.length*rowH);
+  c.style.height=h+'px';
+  var dpr=devicePixelRatio||1;
+  var w=c.clientWidth||c.offsetWidth||800;
+  c.width=w*dpr;c.height=h*dpr;
+  var ctx=c.getContext('2d');
+  ctx.setTransform(dpr,0,0,dpr,0,0);
+  ctx.clearRect(0,0,w,h);
+  var view=getView?getView():{start:0,end:1};
+  var s=Math.max(0,Math.floor(view.start*timeline.length));
+  var e=Math.min(timeline.length,Math.max(s+1,Math.ceil(view.end*timeline.length)));
+  var slice=timeline.slice(s,e);
+  var colW=Math.max(1,w/slice.length+0.6);
+  for(var r=0;r<labels.length;r++){
+    var key=labels[r];
+    var y=r*rowH;
+    // row background
+    ctx.fillStyle=r%2===0?'rgba(255,255,255,0.02)':'rgba(0,0,0,0.15)';
+    ctx.fillRect(0,y,w,rowH-1);
+    // data
+    for(var i=0;i<slice.length;i++){
+      var val=Math.min(1,Math.max(0,(slice[i][key]||0)*boost));
+      if(val<0.05)continue;
+      var x=i/slice.length*w;
+      var alpha=Math.min(0.97,0.1+val*0.87);
+      ctx.fillStyle='rgba(122,184,245,'+alpha.toFixed(3)+')';
+      ctx.fillRect(x,y,colW,rowH-1);
+    }
+    // label background + text
+    ctx.fillStyle='rgba(0,0,0,0.55)';ctx.fillRect(0,y,80,rowH-1);
+    ctx.fillStyle='#9aa6b2';ctx.font='10px system-ui';
+    ctx.fillText(key.replace(/_/g,' '),3,y+rowH-4);
+  }
+  markReady('yamnet-canvas');
+  drawTimeAxis(ctx,w,h,duration);
+
+  // update raw events panel
+  var rawEl=document.getElementById('yn-raw-events');
+  if(rawEl&&window._chartData&&window._chartData.yamnet&&window._chartData.yamnet.topLabels){
+    var tl=window._chartData.yamnet.topLabels;
+    var thr=YAMNET_CFG.minScore;
+    var entries=Object.entries(tl)
+      .filter(function(x){return x[1]>0;})
+      .sort(function(a,b){return b[1]-a[1];})
+      .slice(0,30);
+    rawEl.innerHTML=entries.map(function(x){
+      var score=(x[1]/((window._chartData.yamnet.timeline||[]).length||1)*100).toFixed(1);
+      return '<span style="display:inline-block;margin-right:10px;margin-bottom:2px">'+
+        x[0]+' <span style="color:#7ab8f5">'+score+'%</span></span>';
+    }).join('');
+  }
+}
+
+function yamnetInitControls(){
+  var wrap=document.getElementById('yn-group-checks');
+  if(!wrap)return;
+  wrap.innerHTML='';
+  Object.keys(YAMNET_GROUPS).forEach(function(k){
+    var label=document.createElement('label');
+    label.style.cssText='font-size:11px;color:#aaa;display:flex;align-items:center;gap:4px;cursor:pointer';
+    var cb=document.createElement('input');
+    cb.type='checkbox';cb.id='yn-grp-'+k;cb.checked=true;
+    cb.style.accentColor='#7ab8f5';
+    cb.onchange=function(){yamnetRedraw();};
+    label.appendChild(cb);
+    label.appendChild(document.createTextNode(k.replace(/_/g,' ')));
+    wrap.appendChild(label);
+  });
+  document.getElementById('yamnet-controls').style.display='block';
+}
+
+function yamnetUpdateControls(){
+  var thr=document.getElementById('yn-threshold');
+  var rh=document.getElementById('yn-rowheight');
+  var boost=document.getElementById('yn-boost');
+  if(thr){
+    var v=parseInt(thr.value)/100;
+    YAMNET_CFG.minScore=v;
+    document.getElementById('yn-threshold-lbl').textContent=v.toFixed(2);
+  }
+  if(rh) document.getElementById('yn-rowheight-lbl').textContent=rh.value;
+  if(boost) document.getElementById('yn-boost-lbl').textContent=boost.value+'x';
+  yamnetRedraw();
+}
+
+function yamnetRedraw(){
+  if(!window._chartData||!window._chartData.yamnet)return;
+  var d=window._chartData.yamnet;
+  drawYamnetTimeline(d.timeline,d.duration,d.groups);
+}
+
+function yamnetGetActiveGroups(){
+  var active=[];
+  Object.keys(YAMNET_GROUPS).forEach(function(k){
+    var cb=document.getElementById('yn-grp-'+k);
+    if(!cb||cb.checked)active.push(k);
+  });
+  return active;
+}
+
+function yamnetGetBoost(){
+  var el=document.getElementById('yn-boost');
+  return el?parseInt(el.value):5;
+}
+
+function yamnetGetRowHeight(){
+  var el=document.getElementById('yn-rowheight');
+  return el?parseInt(el.value):17;
+}
+
+// ===== END YAMNET =====
+
+
+function detectInstruments(data){
+  // Rule-based instrument detection from spectral features
+  // Uses: bpm, centroid, rolloff, stereoWidth, inharm, harmDens, tilt,
+  //       attack, onsets, energy, crest, pitch, fft features
+  var instruments=[];
+  var fft=data.fft||{};
+
+  // Helper: median of typed array
+  function med(arr){
+    if(!arr||!arr.length)return 0;
+    var a=Array.from(arr).filter(function(x){return !isNaN(x);}).sort(function(a,b){return a-b;});
+    return a.length?a[Math.floor(a.length/2)]:0;
+  }
+  function mean(arr){
+    if(!arr||!arr.length)return 0;
+    var s=0,n=0;
+    for(var i=0;i<arr.length;i++){if(!isNaN(arr[i])){s+=arr[i];n++;}}
+    return n?s/n:0;
+  }
+
+  var centroid=parseFloat((document.getElementById('v-centroid')||{}).textContent)||0;
+  var rolloff=parseFloat((document.getElementById('v-rolloff')||{}).textContent)||0;
+  var bpm=parseFloat((document.getElementById('v-bpm')||{}).textContent)||0;
+  var stereo=parseFloat((document.getElementById('v-stereo')||{}).textContent)||0; // %
+  var attackMs=parseFloat((document.getElementById('v-attack')||{}).textContent)||0;
+  var inharm=parseFloat((document.getElementById('v-inharm')||{}).textContent)||0;
+  var harmDense=parseFloat((document.getElementById('v-harmdense')||{}).textContent)||0;
+  var tilt=parseFloat((document.getElementById('v-tilt')||{}).textContent)||0;
+  var dyn=parseFloat((document.getElementById('v-dyn')||{}).textContent)||0;
+  var vocalText=(document.getElementById('v-vocal')||{}).textContent||'';
+
+  var onsetRate=mean(data.onsets); // onsets/s
+  var harmMed=med(fft.harm);       // 0=noise, 1=tonal
+  var pitchStab=med(fft.noteStab); // 0..1
+  var harmDensMed=med(fft.harmDens)||harmDense;
+  var tiltMed=med(fft.tilt)||tilt;
+  var inharmMed=med(fft.inharm)||inharm;
+
+  // Score each instrument family
+  var scores={};
+
+  // --- DRUMS / PERCUSSION ---
+  // Short attack, high onset rate, low harmonicity, low pitch stability
+  var drumScore=0;
+  if(attackMs>0&&attackMs<40) drumScore+=2;
+  if(onsetRate>3) drumScore+=2;
+  if(onsetRate>6) drumScore+=1;
+  if(harmMed<0.4) drumScore+=2;
+  if(pitchStab<0.3) drumScore+=1;
+  if(harmDensMed<3) drumScore+=1;
+  scores['Drums/Percussion']=drumScore;
+
+  // --- BASS ---
+  // Low centroid, low rolloff, high harmonicity, low onset rate
+  var bassScore=0;
+  if(centroid>0&&centroid<600) bassScore+=3;
+  else if(centroid<900) bassScore+=1;
+  if(rolloff>0&&rolloff<1200) bassScore+=2;
+  if(harmMed>0.5) bassScore+=1;
+  if(tiltMed>0.2) bassScore+=2; // bass-heavy spectrum
+  scores['Bass']=bassScore;
+
+  // --- VOCALS ---
+  // Formant region 500-3000Hz, pitch stable, harmonic, vocal detection
+  var vocalScore=0;
+  if(vocalText&&!vocalText.includes('—')) vocalScore+=3;
+  if(centroid>500&&centroid<2500) vocalScore+=1;
+  if(pitchStab>0.5) vocalScore+=2;
+  if(harmMed>0.6) vocalScore+=1;
+  if(harmDensMed>3&&harmDensMed<10) vocalScore+=1;
+  scores['Gesang']=vocalScore;
+
+  // --- GUITAR (electric/acoustic) ---
+  // Medium attack, medium-high onset, inharmonic attack, mid centroid
+  var guitarScore=0;
+  if(attackMs>5&&attackMs<80) guitarScore+=1;
+  if(inharmMed>0.03&&inharmMed<0.12) guitarScore+=2;
+  if(centroid>800&&centroid<3500) guitarScore+=1;
+  if(harmDensMed>4&&harmDensMed<12) guitarScore+=1;
+  if(onsetRate>1&&onsetRate<8) guitarScore+=1;
+  scores['Gitarre']=guitarScore;
+
+  // --- PIANO / KEYS ---
+  // Fast attack, wide frequency range, harmonic, medium-high onset
+  var pianoScore=0;
+  if(attackMs>0&&attackMs<30) pianoScore+=2;
+  if(harmDensMed>6) pianoScore+=2;
+  if(inharmMed>0.01&&inharmMed<0.06) pianoScore+=1;
+  if(centroid>300&&centroid<4000) pianoScore+=1;
+  if(rolloff>2000) pianoScore+=1;
+  scores['Piano/Keys']=pianoScore;
+
+  // --- STRINGS / PAD ---
+  // Slow attack, high sustain, tonal, medium harm density, stable pitch
+  var stringScore=0;
+  if(attackMs>60) stringScore+=2;
+  if(harmMed>0.7) stringScore+=2;
+  if(pitchStab>0.6) stringScore+=1;
+  if(harmDensMed>5&&harmDensMed<14) stringScore+=1;
+  if(inharmMed<0.04) stringScore+=1;
+  if(dyn<8) stringScore+=1; // compressed/sustained
+  scores['Streicher/Pad']=stringScore;
+
+  // --- SYNTH LEAD ---
+  // Very tonal, stable pitch, could be any centroid, low inharmonicity
+  var synthScore=0;
+  if(harmMed>0.75) synthScore+=2;
+  if(inharmMed<0.02) synthScore+=3; // very pure = synth
+  if(pitchStab>0.7) synthScore+=1;
+  scores['Synth Lead']=synthScore;
+
+  // --- BRASS / WIND ---
+  // Mid-high centroid, harmonic, medium onset
+  var brassScore=0;
+  if(centroid>800&&centroid<3000) brassScore+=1;
+  if(harmDensMed>6&&harmDensMed<14) brassScore+=1;
+  if(harmMed>0.6) brassScore+=1;
+  if(inharmMed>0.02&&inharmMed<0.08) brassScore+=1;
+  if(attackMs>10&&attackMs<100) brassScore+=1;
+  scores['Bläser']=brassScore;
+
+  // --- CHOIR ---
+  // Tonal, very stable pitch, high harmDens, formant-like
+  var choirScore=0;
+  if(harmMed>0.7) choirScore+=1;
+  if(pitchStab>0.65) choirScore+=2;
+  if(harmDensMed>7) choirScore+=1;
+  if(centroid>300&&centroid<2000) choirScore+=1;
+  if(stereo>40) choirScore+=1; // choirs tend wide stereo
+  scores['Chor']=choirScore;
+
+  // Normalize: only show instruments above threshold, sort by score
+  var threshold=3;
+  var result=Object.keys(scores)
+    .filter(function(k){return scores[k]>=threshold;})
+    .sort(function(a,b){return scores[b]-scores[a];});
+
+  // Cap at top 5
+  return result.slice(0,5).map(function(k){return {name:k,score:scores[k]};});
+}
+
+function renderInstruments(){
+  if(!window._chartData)return;
+  var data=window._chartData;
+  var fft=data.fft;
+  if(!fft)return;
+
+  var instruments=detectInstruments(data);
+  var wrap=document.getElementById('instruments-wrap');
+  var section=document.getElementById('instruments-section');
+  if(!wrap||!section)return;
+
+  if(!instruments.length){section.style.display='none';return;}
+  section.style.display='block';
+
+  var maxScore=instruments[0]?instruments[0].score:1;
+  wrap.innerHTML=instruments.map(function(inst){
+    var pct=Math.round(inst.score/maxScore*100);
+    return '<div style="display:flex;align-items:center;gap:8px;background:#111;border-radius:6px;padding:6px 10px;min-width:140px">'
+      +'<div style="flex:1">'
+      +'<div style="font-size:12px;color:#ccc;margin-bottom:3px">'+inst.name+'</div>'
+      +'<div style="height:3px;background:#222;border-radius:2px">'
+      +'<div style="height:100%;width:'+pct+'%;background:#7ab8f5;border-radius:2px"></div>'
+      +'</div></div>'
+      +'</div>';
+  }).join('');
+}
+
+function redrawAllCharts(){
+  if(!window._chartData)return;
+  var d=window._chartData;
+  if(d.energy){
+    drawEnergyRamp(d.dur);
+    drawCurve('lufs-canvas',d.lufs,'#60c0a0',80,d.dur,function(ctx,w,h,mn,mx){
+      ctx.font='10px system-ui';
+      [-6,-12,-18,-24,-30,-40].forEach(function(db){
+        if(db<mn||db>mx)return;
+        var y=h-(db-mn)/(mx-mn)*h*0.88-h*0.06;
+        ctx.fillStyle='rgba(255,255,255,0.05)';ctx.fillRect(0,Math.round(y),w,1);
+        ctx.fillStyle='#555';ctx.fillText(db+'dB',2,Math.round(y)-2);
+      });
+    });
+    drawCurveWithMask('crest-canvas',d.crest,'#aaaaaa',70,d.dur,d.energy,function(ctx,w,h){
+      [{v:1,l:'1'},{v:3,l:'3'},{v:6,l:'6'},{v:10,l:'10'},{v:15,l:'15'}].forEach(function(r){
+        var y=h-(r.v-1)/(15-1)*h*0.88-h*0.06;
+        ctx.fillStyle='rgba(255,255,255,0.06)';ctx.fillRect(0,Math.round(y),w,1);
+        ctx.font='8px system-ui';ctx.fillStyle='rgba(255,255,255,0.35)';ctx.fillText(r.l,3,Math.round(y)-2);
+      });
+    },1,15);
+    drawCurveWithMask('onset-canvas',d.onsets,'#aaaaaa',70,d.dur,d.energy,function(ctx,w,h,mn,mx){
+      var steps=[Math.round(mx*0.25),Math.round(mx*0.5),Math.round(mx*0.75),Math.round(mx)];
+      steps.forEach(function(v){
+        if(v<=0)return;
+        var y=h-(v-mn)/(mx-mn)*h*0.88-h*0.06;
+        ctx.fillStyle='rgba(255,255,255,0.06)';ctx.fillRect(0,Math.round(y),w,1);
+        ctx.font='8px system-ui';ctx.fillStyle='rgba(255,255,255,0.35)';ctx.fillText(v+'/s',3,Math.round(y)-2);
+      });
+    });
+  }
+  if(d.bpms)drawBPMCurve(d.bpms,d.bpmsIOI,d.bpmsMedian,d.dur);
+  if(d.lBands)drawStereoCurve(d.lBands,d.rBands,d.energyP95,d.dur);
+  if(d.vocalAnalysis)drawVocalAnalysis(d.vocalAnalysis);
+  if(d.fft){
+    drawSpectrogramFromFrames(d.fft.frames,d.fft.numFrames,d.fft.fftSize,d.fft.sr,d.fft.dur);
+    if(d.fft.stereoFrames){
+      var sf=d.fft.stereoFrames instanceof Int8Array?d.fft.stereoFrames:new Int8Array(d.fft.stereoFrames.buffer||d.fft.stereoFrames);
+      drawStereoSpectro(sf,d.fft.frames,d.fft.numFrames,d.fft.fftSize,d.fft.sr,d.fft.dur);
+    }
+    drawFluxFromFrames(d.fft.flux,d.fft.bandFlux,d.fft.dur);
+    drawHarmFromFrames(d.fft.harm,d.fft.entropy,d.fft.dur);
+    drawPitchFromFrames(d.fft.pitch,d.fft.sr,d.fft.dur,d.fft.noteStab);
+    drawChromaHeatmap(d.fft.chroma,d.fft.dur);
+    if(d.fft.inharm)drawInharmCurve(d.fft.inharm,d.fft.dur);
+    if(d.fft.tilt)drawTiltCurve(d.fft.tilt,d.fft.dur);
+    if(d.fft.harmDens)drawCurve('harmdense-canvas',d.fft.harmDens,'#aaaaaa',70,d.fft.dur,function(ctx,w,h){[{v:0,l:'0'},{v:4,l:'4'},{v:8,l:'8'},{v:12,l:'12'},{v:16,l:'16'}].forEach(function(r){var y=h-(r.v/16)*h*0.88-h*0.06;ctx.fillStyle='rgba(255,255,255,0.06)';ctx.fillRect(0,Math.round(y),w,1);ctx.font='8px system-ui';ctx.fillStyle='rgba(255,255,255,0.35)';ctx.fillText(r.l,3,Math.round(y)-2);});},0,16);
+  }
+  if(d.yamnet)drawYamnetTimeline(d.yamnet.timeline,d.yamnet.duration);
+}
+
+// store all chart data for redraw
+window._chartData={};
+
+// playhead RAF — when zoomed, keep playhead at center and scroll view
+var lastPlayPos=-1;
+;
+function updatePlayheads(){
+  requestAnimationFrame(updatePlayheads);
+  if(!songDuration)return;
+  var pos=player.currentTime/songDuration;
+
+  // auto-scroll when playing and zoomed
+  if(zoomLevel>1&&!player.paused&&Math.abs(pos-lastPlayPos)>0.0001){
+    lastPlayPos=pos;
+    centerViewOnPlayhead();
+    redrawAllCharts();
+  }
+
+  // playhead position within view
+  var pct=viewEnd>viewStart?(pos-viewStart)/(viewEnd-viewStart):pos;
+  pct=Math.max(0,Math.min(1,pct));
+
+  phIds.forEach(function(id){
+    var ph=document.getElementById('ph-'+id);
+    var cid=id==='bpm'?'bpmcurve-canvas':id+'-canvas';
+    var c=document.getElementById(cid);
+    if(!c||!ph)return;
+    ph.style.display='block';
+    ph.style.left=Math.round(pct*c.offsetWidth)+'px';
+  });
+  var sw=document.getElementById('struct-wrap');
+  if(sw){
+    var cur=document.getElementById('struct-cursor');
+    if(!cur){cur=document.createElement('div');cur.id='struct-cursor';cur.style.cssText='position:absolute;top:0;bottom:0;width:2px;background:rgba(255,255,255,0.7);pointer-events:none';sw.appendChild(cur);}
+    // struct bar always shows full song, just cursor moves
+    cur.style.left=Math.round(pos*sw.offsetWidth)+'px';
+  }
+}
+updatePlayheads();
+
+async function fetchMeta(uuid){
+  try{
+    var r=await fetch('https://suno.com/song/'+uuid);
+    var html=await r.text();
+    var res={title:'',author:'',artwork:'',tags:[],plays:null,likes:null,comments:null,created_at:'',model:'',lyrics:'',prompt:''};
+    var tm=html.match(/<title>([^<|]+)/);if(tm)res.title=tm[1].trim();
+    var am=html.match(/cdn2\.suno\.ai\/[^"]+\.jpeg/);if(am)res.artwork='https://'+am[0];
+    var dn=html.match(/\\"display_name\\":\\"([^\\\\]+)\\"/);if(!dn)dn=html.match(/"display_name":"([^"]+)"/);if(dn)res.author=dn[1];
+    var tg=html.match(/\\"tags\\":\\"([^\\\\]+)\\"/);if(!tg)tg=html.match(/"tags":"([^"]+)"/);if(tg)res.tags=tg[1].split(',').map(function(t){return t.trim();}).filter(Boolean);
+    var pc=html.match(/\\"play_count\\":(\d+)/);if(pc)res.plays=parseInt(pc[1]);
+    var uc=html.match(/\\"upvote_count\\":(\d+)/);if(uc)res.likes=parseInt(uc[1]);
+    var cc=html.match(/\\"comment_count\\":(\d+)/);if(cc)res.comments=parseInt(cc[1]);
+    var ca=html.match(/\\"created_at\\":\\"([^\\\\]+)\\"/);if(ca)res.created_at=ca[1];
+    var mv=html.match(/\\"major_model_version\\":\\"([^\\\\]+)\\"/);if(mv)res.model=mv[1];
+    // Lyrics: T-chunk split variant (Suno default since ~2025)
+    // Header: push([1,"40:T72e,"]) then content: push([1,"<lyrics>"])
+    var thi=html.search(/self\.__next_f\.push\(\[1,"[0-9a-f]+:T[0-9a-f]+,"\]\)/);
+    if(thi>=0){
+      var ahi=html.indexOf('self.__next_f.push([1,"',thi+10);
+      if(ahi>=0){
+        var cs=ahi+23,ce=html.indexOf('"]);',cs);
+        if(ce<0)ce=html.indexOf('"])',cs);
+        if(ce>cs){
+          var raw=html.slice(cs,ce);
+          if(raw.indexOf('\\n')>=0||raw.indexOf('[')>=0){
+            try{res.lyrics=JSON.parse('"'+raw+'"');}
+            catch(ex){res.lyrics=raw.replace(/\\n/g,'\n').replace(/\\"/g,'"');}
+            res.prompt=res.lyrics;
+          }
+        }
+      }
+    }
+    // Combined T-chunk variant: push([1,"40:T72e,<lyrics>"])
+    if(!res.lyrics){
+      var lm2=html.match(/self\.__next_f\.push\(\[1,"[0-9a-f]+:T[^,]+,([\s\S]+?)"\]\)/);
+      if(lm2&&lm2[1].trim()){
+        try{res.lyrics=JSON.parse('"'+lm2[1]+'"');}
+        catch(ex){res.lyrics=lm2[1].replace(/\\n/g,'\n').replace(/\\"/g,'"');}
+        res.prompt=res.lyrics;
+      }
+    }
+    // __NEXT_DATA__ fallback (older Suno format)
+    if(!res.lyrics){
+      var nd=html.match(/<script id="__NEXT_DATA__"[^>]*>([\s\S]*?)<\/script>/);
+      if(nd){try{var jd=JSON.parse(nd[1]);var clip=jd&&jd.props&&jd.props.pageProps&&jd.props.pageProps.clip;if(clip){if(clip.lyric)res.lyrics=clip.lyric;else if(clip.lyrics)res.lyrics=clip.lyrics;if(clip.metadata&&clip.metadata.prompt&&clip.metadata.prompt[0]!=='$')res.prompt=clip.metadata.prompt;}}catch(ex){}}
+    }
+    return res;
+  }catch(e){return null;}
+}
+
+function downloadAudio(){
+  var uuid=extractUUID(document.getElementById('url-input').value);
+  if(!uuid)return;
+  var useWav=document.getElementById('wav-toggle')&&document.getElementById('wav-toggle').checked;
+  var cacheKey=uuid+(useWav?'_wav':'_mp3');
+  var buf=window.mp3Cache&&window.mp3Cache[cacheKey];
+  if(!buf){setStatus('Nicht im Cache — bitte zuerst analysieren');return;}
+  var ext=useWav?'wav':'mp3';
+  var blob=new Blob([buf],{type:useWav?'audio/wav':'audio/mpeg'});
+  var a=document.createElement('a');
+  a.href=URL.createObjectURL(blob);
+  a.download=uuid+'.'+ext;
+  a.click();
+  setTimeout(function(){URL.revokeObjectURL(a.href);},5000);
+}
+
+async function analyzeFile(input){
+  if(!input.files||!input.files[0])return;
+  var file=input.files[0];
+
+  // cleanup same as analyze()
+  if(window._activeWorker){window._activeWorker.terminate();window._activeWorker=null;}
+  window._chartData={};
+  window._attackComputed=false;
+  songDuration=0;zoomLevel=1;viewStart=0;viewEnd=1;window._spectroPerc=null;window._stereoP95=null;window._yamnetRunning=false;
+  document.getElementById('zoom-slider').value=0;
+  document.getElementById('zoom-label').textContent='1×';
+  if(window._animFrame){cancelAnimationFrame(window._animFrame);window._animFrame=null;}
+  if(window._mediaSource){try{window._mediaSource.disconnect();}catch(e){}window._mediaSource=null;}
+  if(window._analyser){try{window._analyser.disconnect();}catch(e){}window._analyser=null;}
+  if(window._blobURL){URL.revokeObjectURL(window._blobURL);}
+
+  // reset cards
+  ['v-plays','v-likes','v-comments','v-ratio','v-age','v-ppd','v-model',
+   'v-bpm','v-dur','v-loud','v-dyn','v-centroid','v-rolloff','v-key','v-stereo',
+   'v-mode','v-chord-rate','v-entropy','v-texture','v-inharm','v-attack','v-symmetry','v-note-stab',
+   'v-tilt','v-harmdense','v-vocal'].forEach(function(id){
+    var el=document.getElementById(id);if(el)el.textContent='—';
+  });
+  document.getElementById('struct-wrap').innerHTML='';
+  document.getElementById('tags').innerHTML='';
+  document.querySelectorAll('canvas.chart-ready').forEach(function(c){
+    c.classList.remove('chart-ready');c.classList.add('chart-pending');
+    var ctx=c.getContext('2d');if(ctx)ctx.clearRect(0,0,c.width,c.height);
+  });
+
+  setStatus('Datei wird geladen…');setProgress(5);
+
+  // show file info
+  var infoEl=document.getElementById('song-info');
+  if(infoEl){
+    infoEl.style.display='flex';
+    var img=document.getElementById('song-thumb');if(img)img.style.display='none';
+    var titleEl=document.getElementById('song-title');
+    if(titleEl)titleEl.textContent=file.name;
+    var subEl=document.getElementById('song-sub');
+    if(subEl)subEl.textContent=(file.size/1024/1024).toFixed(1)+' MB · lokal';
+    var tagsEl=document.getElementById('tags');if(tagsEl)tagsEl.innerHTML='';
+  }
+
+  try{
+    // blob URL for player
+    window._blobURL=URL.createObjectURL(file);
+    player.src=window._blobURL;
+
+    var arrayBuf=await file.arrayBuffer();
+    setProgress(20);setStatus('Dekodiere Audio…');
+    if(!audioCtx||audioCtx.state==='closed')audioCtx=new(window.AudioContext||window.webkitAudioContext)();
+    if(audioCtx.state==='suspended')await audioCtx.resume();
+    var buf=await audioCtx.decodeAudioData(arrayBuf.slice(0));
+    document.getElementById('v-dur').textContent=fmt(buf.duration);
+    setProgress(30);setStatus('Starte Analyse…');
+    startWorkerAnalysis(buf);
+    runYamnet(buf);
+  }catch(e){
+    setStatus('Fehler: '+e.message);
+    console.error(e);
+  }
+}
+
+async function analyze(){
+  var uuid=extractUUID(document.getElementById('url-input').value);
+  if(!uuid){setStatus('Keine gültige UUID');return;}
+
+  // --- CLEANUP ---
+  if(window._activeWorker){window._activeWorker.terminate();window._activeWorker=null;}
+  var dlBtn=document.getElementById('dl-btn');if(dlBtn)dlBtn.style.display='none';
+  window._chartData={};
+  window._attackComputed=false;
+  songDuration=0;zoomLevel=1;viewStart=0;viewEnd=1;window._spectroPerc=null;window._stereoP95=null;window._yamnetRunning=false;
+  document.getElementById('zoom-slider').value=0;
+  document.getElementById('zoom-label').textContent='1×';
+  if(window._animFrame){cancelAnimationFrame(window._animFrame);window._animFrame=null;}
+  if(window._mediaSource){try{window._mediaSource.disconnect();}catch(e){}window._mediaSource=null;}
+  if(window._analyser){try{window._analyser.disconnect();}catch(e){}window._analyser=null;}
+  player.pause();player.src='';
+  document.getElementById('custom-player').style.display='none';
+  // reset card values
+  ['v-plays','v-likes','v-comments','v-ratio','v-age','v-ppd','v-model',
+   'v-bpm','v-dur','v-loud','v-dyn','v-centroid','v-rolloff','v-key','v-stereo',
+   'v-mode','v-chord-rate','v-entropy','v-texture','v-inharm','v-attack','v-symmetry','v-note-stab',
+   'v-tilt','v-harmdense','v-vocal'].forEach(function(id){
+    var el=document.getElementById(id);if(el)el.textContent='—';
+  });
+  ['gm-bpm','gm-loud','gm-dyn','gm-centroid','gm-rolloff','gm-stereo',
+   'gm-chord-rate','gm-entropy','gm-texture','gm-inharm','gm-attack','gm-note-stab',
+   'gm-tilt','gm-harmdense'].forEach(function(id){
+    var el=document.getElementById(id);if(el)el.style.left='-10px';
+  });
+  document.getElementById('struct-wrap').innerHTML='';
+  document.getElementById('tags').innerHTML='';
+  // reset all charts to pending (skeleton) state
+  document.querySelectorAll('canvas.chart-ready').forEach(function(c){
+    c.classList.remove('chart-ready');
+    c.classList.add('chart-pending');
+    var ctx=c.getContext('2d');
+    if(ctx){ctx.clearRect(0,0,c.width,c.height);}
+  });
+  setProgress(0);
+  setStatus('Metadaten laden…');setProgress(5);
+  var meta=await fetchMeta(uuid);
+  if(meta){
+    currentMeta=meta;
+    document.getElementById('meta').style.display='block';
+    document.getElementById('title').textContent=meta.title||uuid;
+    document.getElementById('meta-sub').textContent=(meta.author||'')+(meta.created_at?' · '+new Date(meta.created_at).toLocaleDateString('de-DE'):'');
+    if(meta.artwork){var img=document.getElementById('artwork');img.src=meta.artwork;img.style.display='block';}
+    document.getElementById('tags').innerHTML=meta.tags.map(function(t){return '<span class="tag">'+t+'</span>';}).join('');
+    document.getElementById('v-model').textContent=meta.model||'—';
+    if(meta.lyrics||meta.prompt){
+      var lw=document.getElementById('lyrics-wrap');
+      var lb=document.getElementById('lyrics-body');
+      if(lw&&lb){lw.style.display='block';lb.textContent=meta.lyrics||meta.prompt;}
+    }
+    if(meta.plays!==null){
+      document.getElementById('v-plays').textContent=meta.plays.toLocaleString('de-DE');
+      document.getElementById('v-likes').textContent=meta.likes!==null?meta.likes.toLocaleString('de-DE'):'—';
+      document.getElementById('v-comments').textContent=meta.comments!==null?meta.comments.toLocaleString('de-DE'):'—';
+      document.getElementById('v-ratio').textContent=meta.likes>0?Math.round(meta.plays/meta.likes):'—';
+    }
+    if(meta.created_at){
+      var ageDays=Math.floor((Date.now()-new Date(meta.created_at))/(1000*86400));
+      document.getElementById('v-age').textContent=ageDays>365?Math.floor(ageDays/365)+'J '+(ageDays%365)+'d':ageDays+'d';
+      if(meta.plays!==null&&ageDays>0)document.getElementById('v-ppd').textContent=Math.round(meta.plays/ageDays).toLocaleString('de-DE');
+    }
+  }
+  setProgress(10);setStatus('Audio laden…');
+  var useWav=document.getElementById('wav-toggle')&&document.getElementById('wav-toggle').checked;
+  var audioUrl='https://cdn1.suno.ai/'+uuid+(useWav?'.wav':'.mp3');
+  try{
+    var arrayBuf;
+    var cacheKey=uuid+(useWav?'_wav':'_mp3');
+    if(mp3Cache[cacheKey]){setStatus('Aus Cache…');arrayBuf=mp3Cache[cacheKey];}
+    else{
+      setStatus((useWav?'WAV':'MP3')+' laden…');
+      var resp=await fetch(audioUrl);
+      if(!resp.ok){
+        if(useWav){
+          // fallback to MP3 if WAV not available
+          setStatus('WAV nicht verfügbar, lade MP3…');
+          audioUrl='https://cdn1.suno.ai/'+uuid+'.mp3';
+          player.src=audioUrl;
+          resp=await fetch(audioUrl);
+          if(!resp.ok){setStatus('Audio nicht verfügbar ('+resp.status+')');return;}
+        } else {
+          setStatus('MP3 nicht verfügbar ('+resp.status+')');return;
+        }
+      }
+      setStatus('Dekodiere…');setProgress(20);
+      arrayBuf=await resp.arrayBuffer();
+      mp3Cache[cacheKey]=arrayBuf;
+    }
+    // show download button now that audio is cached
+    var dlBtn=document.getElementById('dl-btn');
+    if(dlBtn)dlBtn.style.display='inline-block';
+    if(!audioCtx||audioCtx.state==='closed')audioCtx=new(window.AudioContext||window.webkitAudioContext)();
+    if(audioCtx.state==='suspended')await audioCtx.resume();
+    // slice() before decode — decodeAudioData detaches the buffer in some browsers
+    // re-store the original so the cache stays valid for subsequent calls
+    var decodeSlice=arrayBuf.slice(0);
+    mp3Cache[cacheKey]=arrayBuf;
+    var buf=await audioCtx.decodeAudioData(decodeSlice);
+    songDuration=buf.duration;
+    currentSR=buf.sampleRate;
+    // set player src now that audio is confirmed available
+    player.src=audioUrl;
+    player.load();
+    // store samples for high-zoom rendering
+    window._audioSamples=new Float32Array(buf.getChannelData(0));
+    window._audioSR=buf.sampleRate;
+    document.getElementById('v-dur').textContent=fmt(buf.duration);
+    setProgress(30);setStatus('Starte Analyse…');
+    startWorkerAnalysis(buf);
+    runYamnet(buf);
+    drawSpectrum(buf,'freq-canvas');
+  }catch(e){setStatus('Fehler: '+e.message);}
+}
+
+function startWorkerAnalysis(buf){
+  var ch0=buf.getChannelData(0);
+  var ch1=buf.numberOfChannels>1?buf.getChannelData(1):ch0;
+  var sr=buf.sampleRate;
+
+  // copy to transferable
+  var left=new Float32Array(ch0);
+  var right=new Float32Array(ch1);
+
+  var workerCode=getWorkerCode();
+  var blob=new Blob([workerCode],{type:'application/javascript'});
+  var url=URL.createObjectURL(blob);
+  var worker=new Worker(url);
+  window._activeWorker=worker;
+
+  worker.onmessage=function(e){
+    var msg=e.data;
+    switch(msg.type){
+      case 'progress':
+        setStatus(msg.label);setProgress(msg.pct);
+        // dim completed sections, highlight active
+        var pct=msg.pct;
+        document.querySelectorAll('.slbl').forEach(function(el){
+          var sp=el.querySelector('.section-status');
+          if(!sp){sp=document.createElement('span');sp.className='section-status';el.appendChild(sp);}
+          // mark sections as done based on progress thresholds
+          var done=false;
+          var txt=el.textContent;
+          if(txt.indexOf('Struktur')>=0)done=pct>60;
+          else if(txt.indexOf('Lautheit')>=0||txt.indexOf('Energie')>=0||txt.indexOf('Dynamik')>=0||txt.indexOf('Impuls')>=0)done=pct>45;
+          else if(txt.indexOf('Tempo')>=0)done=pct>52;
+          else if(txt.indexOf('Stereo')>=0&&txt.indexOf('Spektro')<0)done=pct>57;
+          else done=pct>=100;
+          sp.textContent=done?'✓':'';
+          sp.style.color=done?'#3a8a4a':'#444';
+        });
+        break;
+      case 'scalars':
+        document.getElementById('v-bpm').textContent=Math.round(msg.bpm);
+        document.getElementById('v-loud').textContent=msg.loudness.toFixed(1);
+        document.getElementById('v-dyn').textContent=msg.dynamic.toFixed(1);
+        document.getElementById('v-centroid').textContent=Math.round(msg.centroid).toLocaleString('de-DE');
+        document.getElementById('v-rolloff').textContent=Math.round(msg.rolloff).toLocaleString('de-DE');
+        document.getElementById('v-key').textContent=msg.key;
+        document.getElementById('v-stereo').textContent=(msg.stereoWidth*100).toFixed(0)+'%';
+        updateGauge('bpm',msg.bpm);
+        updateGauge('loud',msg.loudness);
+        updateGauge('dyn',msg.dynamic);
+        updateGauge('centroid',msg.centroid);
+        updateGauge('rolloff',msg.rolloff);
+        updateGauge('stereo',msg.stereoWidth*100);
+        break;
+      case 'structure': drawStructure(msg.segments,msg.duration);break;
+      case 'envelope':
+        window._chartData.energy=msg.energy;window._chartData.lufs=msg.lufs;
+        window._chartData.crest=msg.crest;window._chartData.onsets=msg.onsets;
+        setTimeout(renderInstruments,100);
+        window._chartData.dur=msg.dur;window._chartData.sr=sr;
+        drawEnvelope(msg.energy,msg.lufs,msg.crest,msg.onsets,msg.dur,sr);
+        // compute attack time immediately when energy arrives
+        if(!window._attackComputed&&msg.energy&&msg.energy.length>10){
+          var eArr=Array.from(msg.energy);
+          var pk=0;for(var i=0;i<eArr.length;i++){if(eArr[i]>pk)pk=eArr[i];}
+          if(pk>0){
+            var sf=0;for(var i=0;i<eArr.length;i++){if(eArr[i]>pk*0.01){sf=i;break;}}
+            var t10=-1,t90=-1;
+            for(var i=sf;i<Math.min(sf+400,eArr.length);i++){
+              if(t10<0&&eArr[i]>=pk*0.1)t10=i;
+              if(t10>=0&&t90<0&&eArr[i]>=pk*0.9){t90=i;break;}
+            }
+            if(t10>=0&&t90>t10){
+              var ams=Math.round((t90-t10)*50);
+              document.getElementById('v-attack').textContent=ams+'ms';
+              updateGauge('attack',ams);
+              window._attackComputed=true;
+            }
+          }
+        }
+        break;
+      case 'bpm_curve':
+        window._chartData.bpms=msg.bpms;
+        window._chartData.bpmsIOI=msg.bpmsIOI;
+        window._chartData.bpmsMedian=msg.bpmsMedian;
+        window._chartData.dur=msg.dur;
+        drawBPMCurve(msg.bpms,msg.bpmsIOI,msg.bpmsMedian,msg.dur);
+        // update global BPM card with median of IOI-median values (most robust)
+        if(msg.bpmsMedian&&msg.bpmsMedian.length){
+          var validBPM=Array.from(msg.bpmsMedian).filter(function(v){return !isNaN(v)&&v>0;});
+          if(validBPM.length){
+            validBPM.sort(function(a,b){return a-b;});
+            var medBPM=validBPM[Math.floor(validBPM.length/2)];
+            document.getElementById('v-bpm').textContent=Math.round(medBPM);
+            updateGauge('bpm',medBPM);
+          }
+        }
+        break;
+      case 'vocal_analysis':
+        window._chartData.vocalAnalysis=msg;
+        drawVocalAnalysis(msg);
+        // update vocal card
+        var vEl=document.getElementById('v-vocal');
+        if(vEl){
+          vEl.textContent=msg.gender+(msg.f0>0?' ('+msg.f0+'Hz)':'');
+          vEl.style.color=msg.gender==='weiblich'?'#ff8c00':msg.gender==='männlich'?'#5090e0':'#aaa';
+        }
+        break;
+      case 'stereo_curve':
+        window._chartData.lBands=msg.lBands;
+        window._chartData.rBands=msg.rBands;
+        window._chartData.energyP95=msg.energyP95;
+        window._chartData.dur=msg.dur;
+        drawStereoCurve(msg.lBands,msg.rBands,msg.energyP95,msg.dur);break;
+      case 'fft_partial':
+        setProgress(msg.pct);
+        setStatus('Runde '+msg.round+'/'+msg.totalRounds+(msg.isFinal?' (final)':'')+'…');
+        if(msg.key)document.getElementById('v-key').textContent=msg.key;
+        // vocal card updated by drawVocalCurve via classifyVoice
+        window._chartData.fft={frames:msg.frames,stereoFrames:msg.stereoFrames,numFrames:msg.numFrames,fftSize:msg.fftSize,sr:sr,dur:msg.dur,flux:msg.flux,bandFlux:msg.bandFlux,harm:msg.harm,pitch:msg.pitch,chroma:msg.chroma,entropy:msg.entropy,inharm:msg.inharm,noteStab:msg.noteStab,tilt:msg.tilt,harmDens:msg.harmDens,centroidCurve:msg.centroidCurve,rolloffCurve:msg.rolloffCurve};
+        var spectroFrames=msg.numFramesFull||msg.numFrames;
+        drawSpectrogramFromFrames(msg.frames,msg.numFrames,msg.fftSize,sr,msg.dur,spectroFrames);
+        if(msg.stereoFrames){
+          // ensure correct typed array view
+          var sf=msg.stereoFrames instanceof Int8Array?msg.stereoFrames:new Int8Array(msg.stereoFrames.buffer||msg.stereoFrames);
+          drawStereoSpectro(sf,msg.frames,msg.numFrames,msg.fftSize,sr,msg.dur);
+        }
+        drawFluxFromFrames(msg.flux,msg.bandFlux,msg.dur);
+        drawHarmFromFrames(msg.harm,msg.entropy,msg.dur);
+        drawPitchFromFrames(msg.pitch,sr,msg.dur,msg.noteStab);
+        drawChromaHeatmap(msg.chroma,msg.dur);
+        if(msg.entropy&&msg.harm)drawHarmFromFrames(msg.harm,msg.entropy,msg.dur);
+        if(msg.inharm){storeChartData('inharm-canvas',msg.inharm);drawInharmCurve(msg.inharm,msg.dur);}
+        if(msg.tilt){storeChartData('tilt-canvas',msg.tilt);drawTiltCurve(msg.tilt,msg.dur);}
+        if(msg.harmDens){storeChartData('harmdense-canvas',msg.harmDens);drawCurve('harmdense-canvas',msg.harmDens,'#aaaaaa',70,msg.dur,function(ctx,w,h){[{v:0,l:'0'},{v:4,l:'4'},{v:8,l:'8'},{v:12,l:'12'},{v:16,l:'16'}].forEach(function(r){var y=h-(r.v/16)*h*0.88-h*0.06;ctx.fillStyle='rgba(255,255,255,0.06)';ctx.fillRect(0,Math.round(y),w,1);ctx.font='8px system-ui';ctx.fillStyle='rgba(255,255,255,0.35)';ctx.fillText(r.l,3,Math.round(y)-2);});},0,16);}
+        if(msg.noteStab){
+          // only average non-zero values (zero = no pitch detected)
+          var stabArr=Array.from(msg.noteStab).filter(function(v){return v>0;});
+          if(stabArr.length>0){
+            var meanStab=stabArr.reduce(function(a,b){return a+b;},0)/stabArr.length;
+            var stabPct=Math.round(meanStab*100);
+            document.getElementById('v-note-stab').textContent=stabPct+'%';
+            updateGauge('note-stab',stabPct);
+          }
+        }
+        // update scalar cards from FFT
+        if(msg.scalars){
+          var sc=msg.scalars;
+          if(sc.centroid){document.getElementById('v-centroid').textContent=Math.round(sc.centroid).toLocaleString('de-DE');updateGauge('centroid',sc.centroid);}
+          if(sc.rolloff){document.getElementById('v-rolloff').textContent=Math.round(sc.rolloff).toLocaleString('de-DE');updateGauge('rolloff',sc.rolloff);}
+          if(sc.entropy!==undefined){var ev=sc.entropy*100;document.getElementById('v-entropy').textContent=ev.toFixed(0)+'%';updateGauge('entropy',ev);}
+          if(sc.inharm!==undefined){var iv=sc.inharm*1000;document.getElementById('v-inharm').textContent=iv.toFixed(1);updateGauge('inharm',Math.min(100,iv*5));}
+          if(sc.tilt!==undefined){var tv=((sc.tilt+1)/2*100).toFixed(0);document.getElementById('v-tilt').textContent=(sc.tilt>0?'+':'')+sc.tilt.toFixed(2);updateGauge('tilt',sc.tilt*100);}
+          if(sc.harmDens!==undefined){document.getElementById('v-harmdense').textContent=sc.harmDens.toFixed(1);updateGauge('harmdense',sc.harmDens);}
+          if(sc.chordRate!==undefined){document.getElementById('v-chord-rate').textContent=sc.chordRate.toFixed(2);updateGauge('chord-rate',sc.chordRate);}
+          if(sc.mode)document.getElementById('v-mode').textContent=sc.mode;
+          // texture index
+          var harm=window._chartData.fft&&window._chartData.fft.harm?Array.from(window._chartData.fft.harm):[];
+          var meanHarm=harm.length?harm.reduce(function(a,b){return a+b;},0)/harm.length:0.5;
+          var texture=Math.round((sc.entropy*0.4+(1-meanHarm)*0.4+sc.chordRate/2*0.2)*100);
+          texture=Math.min(100,texture);
+          document.getElementById('v-texture').textContent=texture+'%';
+          updateGauge('texture',texture);
+          // energy symmetry from lufs
+          var lufsArr=window._chartData.lufs?Array.from(window._chartData.lufs):[];
+          if(lufsArr.length>6){
+            var third=Math.floor(lufsArr.length/3);
+            var a1=lufsArr.slice(0,third).reduce(function(a,b){return a+b;},0)/third;
+            var a2=lufsArr.slice(third,2*third).reduce(function(a,b){return a+b;},0)/third;
+            var a3=lufsArr.slice(2*third).reduce(function(a,b){return a+b;},0)/third;
+            var sym='arch';
+            if(a3>a1+1)sym='crescendo ↑';
+            else if(a1>a3+1)sym='decrescendo ↓';
+            else if(a2>a1+0.5&&a2>a3+0.5)sym='arch ∧';
+            else sym='gleichmäßig ─';
+            document.getElementById('v-symmetry').textContent=sym;
+          }
+          // attack time — only compute once when energy data available
+          if(!window._attackComputed){
+            var energyArr=window._chartData.energy?Array.from(window._chartData.energy):[];
+            if(energyArr.length>10){
+              // loop instead of Math.max.apply (stack overflow on large arrays)
+              var peak=0;
+              for(var i=0;i<energyArr.length;i++){if(energyArr[i]>peak)peak=energyArr[i];}
+              if(peak>0){
+                var thr10=peak*0.1,thr90=peak*0.9;
+                var startF=0;
+                for(var i=0;i<energyArr.length;i++){if(energyArr[i]>peak*0.01){startF=i;break;}}
+                var t10=-1,t90=-1;
+                for(var i=startF;i<Math.min(startF+400,energyArr.length);i++){
+                  if(t10<0&&energyArr[i]>=thr10)t10=i;
+                  if(t10>=0&&t90<0&&energyArr[i]>=thr90){t90=i;break;}
+                }
+                if(t10>=0&&t90>t10){
+                  var attackMs=Math.round((t90-t10)*50);
+                  document.getElementById('v-attack').textContent=attackMs+'ms';
+                  updateGauge('attack',attackMs);
+                  window._attackComputed=true;
+                }
+              }
+            }
+          }
+        }
+        if(msg.isFinal){setProgress(100);setStatus('Fertig');}
+        break;
+    }
+  };
+  worker.postMessage({left:left,right:right,sr:sr},[left.buffer,right.buffer]);
+}
+
+function getWorkerCode(){
+return `
+var sr,left,right;
+
+// =============================================
+// COOLEY-TUKEY FFT (real input, power-of-2 N)
+// Returns interleaved [re0,im0,re1,im1,...] Float64Array
+// =============================================
+function fft(re,im){
+  var n=re.length;
+  // bit-reversal permutation
+  for(var i=0,j=0;i<n;i++){
+    if(i<j){var tr=re[i];re[i]=re[j];re[j]=tr;var ti=im[i];im[i]=im[j];im[j]=ti;}
+    var bit=n>>1;for(;j&bit;bit>>=1)j^=bit;j^=bit;
+  }
+  // butterfly
+  for(var len=2;len<=n;len<<=1){
+    var ang=-2*Math.PI/len;
+    var wRe=Math.cos(ang),wIm=Math.sin(ang);
+    for(var i=0;i<n;i+=len){
+      var curRe=1,curIm=0;
+      for(var j=0;j<len/2;j++){
+        var uRe=re[i+j],uIm=im[i+j];
+        var vRe=re[i+j+len/2]*curRe-im[i+j+len/2]*curIm;
+        var vIm=re[i+j+len/2]*curIm+im[i+j+len/2]*curRe;
+        re[i+j]=uRe+vRe;im[i+j]=uIm+vIm;
+        re[i+j+len/2]=uRe-vRe;im[i+j+len/2]=uIm-vIm;
+        var newRe=curRe*wRe-curIm*wIm;
+        curIm=curRe*wIm+curIm*wRe;curRe=newRe;
+      }
+    }
+  }
+}
+
+// LPC — Levinson-Durbin + Formant extraction
+// =============================================
+// fftRadix2 is an alias for fft (same algorithm)
+function fftRadix2(re,im,N){fft(re,im);}
+
+// Compute LPC coefficients via Levinson-Durbin recursion
+// signal: Float32Array, offset: start, N: frame length, p: LPC order
+// Returns Float64Array of p coefficients [a1..ap]
+
+// Evaluate LPC spectrum at nFreqs equally spaced frequencies 0..sr/2
+// Returns magnitude array — peaks are formants
+
+// Find top-N spectral peaks in a range, returns array of {freq, amp}
+
+function rfft(signal,offset,N){
+  var re=new Float64Array(N),im=new Float64Array(N);
+  for(var i=0;i<N;i++){
+    var w=0.5*(1-Math.cos(2*Math.PI*i/(N-1)));
+    re[i]=(offset+i<signal.length?signal[offset+i]:0)*w;
+  }
+  fft(re,im);
+  var mag=new Float32Array(N/2);
+  for(var k=0;k<N/2;k++)mag[k]=Math.sqrt(re[k]*re[k]+im[k]*im[k])/N;
+  return mag;
+}
+
+// Mid/Side stereo width: RMS(S)/RMS(M), perceptually valid
+function computeStereoWidth(left,right){
+  var n=Math.min(left.length,right.length);
+  var ms=0,mm=0;
+  for(var i=0;i<n;i++){
+    var m=left[i]+right[i],s=left[i]-right[i];
+    mm+=m*m;ms+=s*s;
+  }
+  var rmsM=Math.sqrt(mm/n),rmsS=Math.sqrt(ms/n);
+  return rmsM>0?Math.min(1,rmsS/rmsM):0;
+}
+
+// HPS (Harmonic Product Spectrum) pitch detection
+// Returns dominant F0 in Hz, 0 if not found
+function hpsPitch(mag,sr,fftSize){
+  var bins=mag.length;
+  var hps=new Float32Array(Math.floor(bins/4));
+  for(var k=0;k<hps.length;k++){
+    hps[k]=mag[k];
+    for(var h=2;h<=4;h++){var hb=Math.round(k*h);if(hb<bins)hps[k]*=mag[hb];}
+  }
+  var kLo=Math.round(80/sr*fftSize),kHi=Math.round(600/sr*fftSize);
+  var best=0,bestK=0;
+  for(var k=kLo;k<Math.min(kHi,hps.length);k++){if(hps[k]>best){best=hps[k];bestK=k;}}
+  if(bestK===0)return 0;
+  return bestK*sr/fftSize;
+}
+
+function smooth(arr,w){return arr.map(function(_,i){var s=0,c=0;for(var j=Math.max(0,i-w);j<=Math.min(arr.length-1,i+w);j++){s+=arr[j];c++;}return s/c;});}
+
+onmessage=function(e){
+  left=e.data.left; right=e.data.right; sr=e.data.sr;
+  var ch=left, n=ch.length, dur=n/sr;
+
+  postMessage({type:'progress',label:'Hüllkurve…',pct:32});
+  // --- ENVELOPE (shared) ---
+  var envStep=Math.floor(sr/100);
+  var env=[], envLen=Math.floor(n/envStep);
+  for(var i=0;i<envLen;i++){var s=0;for(var j=i*envStep;j<(i+1)*envStep&&j<n;j++)s+=Math.abs(ch[j]);env.push(s/envStep);}
+
+  // global loudness & dynamic
+  var sumSq=0,peak=0;
+  for(var i=0;i<n;i++){sumSq+=ch[i]*ch[i];var a=Math.abs(ch[i]);if(a>peak)peak=a;}
+  var rms=Math.sqrt(sumSq/n),loudness=20*Math.log10(rms+1e-10),dynamic=20*Math.log10(peak+1e-10)-loudness;
+
+  // energy frames 50ms
+  var eStep=Math.floor(sr*0.05),eFrames=Math.floor(n/eStep),energy=new Float32Array(eFrames);
+  for(var i=0;i<eFrames;i++){var s=0;for(var j=i*eStep;j<(i+1)*eStep;j++)s+=ch[j]*ch[j];energy[i]=s/eStep;}
+
+  // lufs frames 400ms
+  var lStep=Math.floor(sr*0.4),lFrames=Math.floor(n/lStep),lufs=new Float32Array(lFrames);
+  for(var i=0;i<lFrames;i++){var s=0;for(var j=i*lStep;j<(i+1)*lStep;j++)s+=ch[j]*ch[j];var r=Math.sqrt(s/lStep);lufs[i]=r>0?20*Math.log10(r):-60;}
+
+  // crest frames 500ms
+  var cStep=Math.floor(sr*0.5),cFrames=Math.floor(n/cStep),crest=new Float32Array(cFrames);
+  for(var i=0;i<cFrames;i++){var s=0,pk=0;for(var j=i*cStep;j<(i+1)*cStep;j++){var a=Math.abs(ch[j]);s+=a*a;if(a>pk)pk=a;}var r=Math.sqrt(s/cStep);crest[i]=r>0?pk/r:0;}
+
+  // onsets from envelope diff
+  var diff=[];for(var i=1;i<env.length;i++)diff.push(Math.max(0,env[i]-env[i-1]));
+  var oStep=Math.floor(sr*0.5/envStep),oFrames=Math.floor(diff.length/oStep),onsets=new Float32Array(oFrames);
+  for(var i=0;i<oFrames;i++){var cnt=0;for(var j=i*oStep;j<(i+1)*oStep;j++)if(diff[j]>0.01)cnt++;onsets[i]=cnt/(0.5);}
+
+  postMessage({type:'progress',label:'Skalare…',pct:38});
+
+  // BPM global (autocorrelation on envelope diff)
+  var minL=Math.floor(6000/180),maxL=Math.floor(6000/60),best=0,bestL=minL;
+  for(var lag=minL;lag<=maxL;lag++){var s=0;for(var i=0;i<diff.length-lag;i++)s+=diff[i]*diff[i+lag];if(s>best){best=s;bestL=lag;}}
+  var bpm=6000/bestL;
+
+  // Mid/Side stereo width
+  var stereoWidth=computeStereoWidth(left,right);
+
+  postMessage({type:'progress',label:'Spektral (FFT)…',pct:40});
+
+  // spectral centroid & rolloff via real FFT
+  var fftSize=2048,mid=Math.floor(n*0.3);
+  var magC=rfft(ch,mid,fftSize);
+  var cnum=0,cden=0,tot=0;
+  for(var k=0;k<magC.length;k++){var f=k*sr/fftSize;cnum+=f*magC[k];cden+=magC[k];tot+=magC[k];}
+  var centroid=cden>0?cnum/cden:0;
+  var cum=0,thr=tot*0.85,rolloff=sr/2;
+  for(var k=0;k<magC.length;k++){cum+=magC[k];if(cum>=thr){rolloff=k*sr/fftSize;break;}}
+
+  postMessage({type:'progress',label:'Tonart…',pct:42});
+
+  // key estimation via FFT chroma
+  var notes=['C','C#','D','D#','E','F','F#','G','G#','A','A#','B'];
+  var majorP=[6.35,2.23,3.48,2.33,4.38,4.09,2.52,5.19,2.39,3.66,2.29,2.88];
+  var minorP=[6.33,2.68,3.52,5.38,2.60,3.53,2.54,4.75,3.98,2.69,3.34,3.17];
+  var chromaG=new Float32Array(12);
+  var kfftSize=4096,kstep=kfftSize*2,kmid=Math.floor(n*0.15),kend=Math.floor(n*0.85);
+  for(var start=kmid;start+kfftSize<kend;start+=kstep){
+    var magK=rfft(ch,start,kfftSize);
+    for(var k=1;k<magK.length;k++){
+      var freq=k*sr/kfftSize;if(freq<80||freq>4000)continue;
+      var midi=Math.round(12*Math.log2(freq/440)+69);
+      chromaG[((midi%12)+12)%12]+=magK[k];
+    }
+  }
+  var cmx=Math.max.apply(null,Array.prototype.slice.call(chromaG));
+  if(cmx>0)for(var i=0;i<12;i++)chromaG[i]/=cmx;
+  var bestScore=-Infinity,bestKey='';
+  for(var root=0;root<12;root++){
+    for(var mode=0;mode<2;mode++){
+      var prof=mode===0?majorP:minorP;
+      var sm2=0,sp2=0;for(var i=0;i<12;i++){sm2+=chromaG[(i+root)%12];sp2+=prof[i];}
+      var mn2=sm2/12,pn2=sp2/12,num2=0,dc2=0,dp2=0;
+      for(var i=0;i<12;i++){num2+=(chromaG[(i+root)%12]-mn2)*(prof[i]-pn2);dc2+=Math.pow(chromaG[(i+root)%12]-mn2,2);dp2+=Math.pow(prof[i]-pn2,2);}
+      var r2=dc2>0&&dp2>0?num2/Math.sqrt(dc2*dp2):0;
+      if(r2>bestScore){bestScore=r2;bestKey=notes[root]+(mode===0?' Dur':' Moll');}
+    }
+  }
+
+  // --- 5th PERCENTILE ENERGY THRESHOLD ---
+  var energySorted=energy.slice().sort(function(a,b){return a-b;});
+  var p5idx=Math.floor(energySorted.length*0.05);
+  var energyP5=energySorted[p5idx]*3;
+
+  // --- VOCAL ANALYSIS — sliding window, 2s hop, small FFT ---
+  var vFftSize=2048; // small enough for O(n log n) radix2
+  var vHalf=vFftSize/2;
+  var vHopSize=Math.floor(sr*1);   // 1s hop
+  var vNumFrames=Math.floor((n-vFftSize)/vHopSize)+1;
+  var vHann=new Float32Array(vFftSize);
+  for(var i=0;i<vFftSize;i++)vHann[i]=0.5*(1-Math.cos(2*Math.PI*i/vFftSize));
+  var vRe=new Float32Array(vFftSize),vIm=new Float32Array(vFftSize);
+
+  var vocalMale=new Float32Array(vNumFrames);
+  var vocalFemale=new Float32Array(vNumFrames);
+  var vocalFormant=new Float32Array(vNumFrames);
+  var maleScoreSum=0,femaleScoreSum=0,vocalWindowCount=0;
+  var detectedF0s=[];
+
+  for(var vw=0;vw<vNumFrames;vw++){
+    var vPos=vw*vHopSize;
+    if(vPos+vFftSize>n)break;
+
+    // FFT via radix2
+    for(var i=0;i<vFftSize;i++){vRe[i]=ch[vPos+i]*vHann[i];vIm[i]=0;}
+    fftRadix2(vRe,vIm,vFftSize);
+    var vMag=new Float32Array(vHalf);
+    for(var k=1;k<vHalf;k++)vMag[k]=Math.sqrt(vRe[k]*vRe[k]+vIm[k]*vIm[k])/vFftSize;
+
+    // Band energies
+    var maleE=0,femaleE=0,totalE=0,f1E=0,f2E=0;
+    for(var k=1;k<vHalf;k++){
+      var freq=k*sr/vFftSize,e=vMag[k]*vMag[k];
+      totalE+=e;
+      if(freq>=80&&freq<=165)maleE+=e;
+      if(freq>=165&&freq<=350)femaleE+=e;
+      if(freq>=400&&freq<=900)f1E+=e;
+      if(freq>=900&&freq<=2800)f2E+=e;
+    }
+    var formantRatio=totalE>0?(f1E+f2E)/totalE:0;
+    vocalFormant[vw]=formantRatio;
+
+    if(formantRatio<0.03){vocalMale[vw]=0;vocalFemale[vw]=0;continue;}
+
+    // spectral centroid in vocal band
+    var vcNum=0,vcDen=0;
+    for(var k=1;k<vHalf;k++){
+      var freq=k*sr/vFftSize;
+      if(freq>=80&&freq<=2000){vcNum+=freq*vMag[k];vcDen+=vMag[k];}
+    }
+    var vCentroid=vcDen>0?vcNum/vcDen:0;
+
+    // HPS F0
+    var hpsLen=Math.floor(vHalf/3);
+    var bestHpsK=0,bestHpsVal=0;
+    for(var k=Math.ceil(80*vFftSize/sr);k<Math.min(hpsLen,Math.floor(500*vFftSize/sr));k++){
+      var hv=vMag[k];
+      if(k*2<vHalf)hv*=vMag[k*2];
+      if(k*3<vHalf)hv*=vMag[k*3];
+      if(hv>bestHpsVal){bestHpsVal=hv;bestHpsK=k;}
+    }
+    var hpsF0=bestHpsK>0?bestHpsK*sr/vFftSize:0;
+
+    // Score
+    var mScore=0,fScore=0;
+    if(maleE+femaleE>0){mScore+=maleE/(maleE+femaleE);fScore+=femaleE/(maleE+femaleE);}
+    if(hpsF0>0&&hpsF0<500){
+      if(hpsF0<160)mScore+=1.5; else if(hpsF0>200)fScore+=1.5; else{mScore+=0.5;fScore+=0.5;}
+      detectedF0s.push(hpsF0);
+    }
+    if(vCentroid>0){if(vCentroid<350)mScore+=0.5; else if(vCentroid>500)fScore+=0.5;}
+    if(f2E>f1E*1.5)fScore+=0.3; else if(f1E>f2E)mScore+=0.3;
+
+    vocalMale[vw]=mScore;
+    vocalFemale[vw]=fScore;
+    maleScoreSum+=mScore;
+    femaleScoreSum+=fScore;
+    vocalWindowCount++;
+  }
+
+  var f0Median=0,vocalGender;
+  if(vocalWindowCount<3){
+    vocalGender='instrumental';
+  } else {
+    if(detectedF0s.length>0){
+      detectedF0s.sort(function(a,b){return a-b;});
+      f0Median=detectedF0s[Math.floor(detectedF0s.length/2)];
+    }
+    var ratio=femaleScoreSum/(maleScoreSum+femaleScoreSum+0.001);
+    if(ratio>0.58)vocalGender='weiblich';
+    else if(ratio<0.42)vocalGender='männlich';
+    else vocalGender='gemischt';
+  }
+
+  postMessage({type:'scalars',bpm:bpm,loudness:loudness,dynamic:dynamic,centroid:centroid,rolloff:rolloff,key:bestKey,stereoWidth:stereoWidth,vocalGender:vocalGender,f0:Math.round(f0Median)});
+  postMessage({type:'vocal_analysis',male:vocalMale,female:vocalFemale,formant:vocalFormant,gender:vocalGender,f0:Math.round(f0Median),dur:dur,hopSize:vHopSize,winSize:vFftSize});
+  postMessage({type:'envelope',energy:energy,lufs:lufs,crest:crest,onsets:onsets,dur:dur});
+
+  postMessage({type:'progress',label:'BPM-Kurve…',pct:48});
+
+  // BPM curve with energy mask — autocorrelation
+  var bwinLen=Math.floor(sr*5),bstepLen=Math.floor(sr*1),bnumW=Math.floor((n-bwinLen)/bstepLen),bpms=[];
+  for(var w=0;w<bnumW;w++){
+    var wStart=w*bstepLen;
+    var wEnergy=0;for(var i=0;i<bwinLen;i++)wEnergy+=ch[wStart+i]*ch[wStart+i];
+    wEnergy=Math.sqrt(wEnergy/bwinLen);
+    if(wEnergy<energyP5){bpms.push(NaN);continue;}
+    var sl=ch.subarray(wStart,wStart+bwinLen);
+    var step2=Math.floor(sr/100),env2=[],diff2=[];
+    for(var i=0;i<sl.length-step2;i+=step2){var s=0;for(var j=0;j<step2;j++)s+=Math.abs(sl[i+j]);env2.push(s/step2);}
+    for(var i=1;i<env2.length;i++)diff2.push(Math.max(0,env2[i]-env2[i-1]));
+    var minL2=Math.floor(6000/180),maxL2=Math.floor(6000/60),best2=0,bestL2=minL2;
+    for(var lag=minL2;lag<=maxL2;lag++){var s=0;for(var i=0;i<diff2.length-lag;i++)s+=diff2[i]*diff2[i+lag];if(s>best2){best2=s;bestL2=lag;}}
+    bpms.push(6000/bestL2);
+  }
+  bpms=bpms.map(function(v,i){
+    if(isNaN(v))return NaN;
+    var s=0,c=0;for(var j=Math.max(0,i-6);j<=Math.min(bpms.length-1,i+6);j++){if(!isNaN(bpms[j])){s+=bpms[j];c++;}}
+    return c>0?s/c:NaN;
+  });
+
+  // IOI BPM curve with energy mask
+  var ioiWinLen=Math.floor(sr*8),ioiStepLen=Math.floor(sr*1);
+  var ioiNumW=Math.floor((n-ioiWinLen)/ioiStepLen);
+  var bpmsIOI=new Float32Array(ioiNumW);
+  var bpmsMedian=new Float32Array(ioiNumW);
+  var eStep2=Math.floor(sr*0.02);
+  for(var w=0;w<ioiNumW;w++){
+    var wStart=w*ioiStepLen,wEnd=wStart+ioiWinLen;
+    var wEnergy2=0;for(var i=wStart;i<wEnd;i++)wEnergy2+=ch[i]*ch[i];
+    wEnergy2=Math.sqrt(wEnergy2/ioiWinLen);
+    if(wEnergy2<energyP5){bpmsIOI[w]=NaN;bpmsMedian[w]=NaN;continue;}
+    var eFrames2=[];
+    for(var i=wStart;i<wEnd-eStep2;i+=eStep2){
+      var s=0;for(var j=0;j<eStep2;j++)s+=ch[i+j]*ch[i+j];
+      eFrames2.push(Math.sqrt(s/eStep2));
+    }
+    var eMean=0;for(var i=0;i<eFrames2.length;i++)eMean+=eFrames2[i];eMean/=eFrames2.length;
+    var thr2=eMean*1.3;
+    var peaks2=[],minDist=10,lastPeak=-minDist;
+    for(var i=1;i<eFrames2.length-1;i++){
+      if(eFrames2[i]>eFrames2[i-1]&&eFrames2[i]>eFrames2[i+1]&&eFrames2[i]>thr2&&i-lastPeak>=minDist){peaks2.push(i);lastPeak=i;}
+    }
+    if(peaks2.length<2){bpmsIOI[w]=NaN;bpmsMedian[w]=NaN;continue;}
+    var iois=[];
+    for(var i=1;i<peaks2.length;i++){var sec=(peaks2[i]-peaks2[i-1])*eStep2/sr;var bpmVal=60/sec;if(bpmVal>=50&&bpmVal<=200)iois.push(bpmVal);}
+    if(!iois.length){bpmsIOI[w]=NaN;bpmsMedian[w]=NaN;continue;}
+    var sum=0;for(var i=0;i<iois.length;i++)sum+=iois[i];bpmsIOI[w]=sum/iois.length;
+    iois.sort(function(a,b){return a-b;});bpmsMedian[w]=iois[Math.floor(iois.length/2)];
+  }
+  function smArr2(arr,w2){return Array.prototype.slice.call(arr).map(function(v,i){
+    if(isNaN(v))return NaN;
+    var s=0,c=0;for(var j=Math.max(0,i-w2);j<=Math.min(arr.length-1,i+w2);j++){if(!isNaN(arr[j])){s+=arr[j];c++;}}
+    return c>0?s/c:NaN;
+  });}
+  bpmsIOI=smArr2(bpmsIOI,4);bpmsMedian=smArr2(bpmsMedian,4);
+  postMessage({type:'bpm_curve',bpms:bpms,bpmsIOI:bpmsIOI,bpmsMedian:bpmsMedian,dur:dur});
+
+  postMessage({type:'progress',label:'Stereo…',pct:52});
+  var nn=Math.min(left.length,right.length);
+  var sStep=Math.floor(sr*0.1),sFrames=Math.floor(nn/sStep);
+  // 8 octave bands
+  var sBands=[[20,40],[40,80],[80,160],[160,315],[315,630],[630,1250],[1250,2500],[2500,20000]];
+  var sFftSize=1024;
+  var nSBands=8;
+  var lBands=[],rBands=[];
+  for(var b=0;b<nSBands;b++){lBands.push(new Float32Array(sFrames));rBands.push(new Float32Array(sFrames));}
+  // global max for absolute normalization (p95 across all bands)
+  var allEnergies=[];
+  for(var i=0;i<sFrames;i++){
+    var magL=rfft(left,i*sStep,sFftSize);
+    var magR=rfft(right,i*sStep,sFftSize);
+    for(var b=0;b<nSBands;b++){
+      var kLo=Math.round(sBands[b][0]/sr*sFftSize);
+      var kHi=Math.min(Math.round(sBands[b][1]/sr*sFftSize),sFftSize/2);
+      if(kHi<=kLo)kHi=kLo+1;
+      var el=0,er=0,cnt=kHi-kLo;
+      for(var k=kLo;k<kHi;k++){el+=magL[k]*magL[k];er+=magR[k]*magR[k];}
+      lBands[b][i]=Math.sqrt(el/cnt);
+      rBands[b][i]=Math.sqrt(er/cnt);
+      allEnergies.push(lBands[b][i]+rBands[b][i]);
+    }
+  }
+  // p95 of total energy for global normalization
+  allEnergies.sort(function(a,b){return a-b;});
+  var energyP95=allEnergies[Math.floor(allEnergies.length*0.95)]||1;
+  postMessage({type:'stereo_curve',lBands:lBands,rBands:rBands,energyP95:energyP95,dur:dur});
+
+
+  postMessage({type:'progress',label:'Struktur…',pct:58});
+  var frameSec=2,frameLen=Math.floor(sr*frameSec),numSeg=Math.floor(n/frameLen);
+  var fps2=[];
+  var bands=[[20,100],[100,250],[250,500],[500,1000],[1000,2000],[2000,4000],[4000,8000],[8000,16000]];
+  var segFftSize=512;
+  for(var f=0;f<numSeg;f++){
+    var magS=rfft(ch,f*frameLen,segFftSize);
+    var fp=new Float32Array(bands.length);
+    for(var b=0;b<bands.length;b++){
+      var en=0,cnt=0;
+      for(var k=1;k<magS.length;k++){
+        var freq=k*sr/segFftSize;if(freq<bands[b][0]||freq>bands[b][1])continue;
+        en+=magS[k];cnt++;
+      }
+      fp[b]=cnt>0?en/cnt:0;
+    }
+    var mx=Math.max.apply(null,Array.prototype.slice.call(fp));if(mx>0)for(var b=0;b<bands.length;b++)fp[b]/=mx;
+    fps2.push(fp);
+  }
+  var novelty=[];var kern=3;
+  for(var f=kern;f<numSeg-kern;f++){
+    var before=0,after=0;
+    for(var b=0;b<bands.length;b++){
+      var ab=0,aa=0;
+      for(var k=1;k<=kern;k++){ab+=fps2[f-k][b];aa+=fps2[f+k][b];}
+      ab/=kern;aa/=kern;
+      before+=Math.pow(fps2[f][b]-ab,2);after+=Math.pow(fps2[f][b]-aa,2);
+    }
+    novelty.push(Math.sqrt(before+after));
+  }
+  novelty=novelty.map(function(_,i){var s=0,c=0;for(var j=Math.max(0,i-2);j<=Math.min(novelty.length-1,i+2);j++){s+=novelty[j];c++;}return s/c;});
+  var thrN=0;for(var i=0;i<novelty.length;i++)thrN+=novelty[i];thrN=thrN/novelty.length*1.2;
+  var bounds=[0],minGap=Math.floor(8/frameSec);
+  for(var i=1;i<novelty.length-1;i++){
+    if(novelty[i]>novelty[i-1]&&novelty[i]>novelty[i+1]&&novelty[i]>thrN&&(i-bounds[bounds.length-1])>=minGap)bounds.push(i+kern);
+  }
+  bounds.push(numSeg);
+  var segColors=['#2a5a8a','#3a7a4a','#8a4a2a','#6a3a8a','#7a7a2a','#2a7a7a','#8a2a5a'];
+  var segments=[];
+  for(var i=0;i<bounds.length-1;i++){
+    var ss=bounds[i]*frameSec,se=Math.min(bounds[i+1]*frameSec,dur);
+    segments.push({start:ss,end:se,color:segColors[i%segColors.length]});
+  }
+  postMessage({type:'structure',segments:segments,duration:dur});
+
+  postMessage({type:'progress',label:'FFT Runde…',pct:62});
+  // --- PROGRESSIVE FFT ROUNDS using real FFT ---
+  var fftSize2=1024;
+  var bins2=fftSize2/2;
+  var rounds=[8192,4096,2048,1024,256];
+  var totalRounds=rounds.length;
+
+  for(var round=0;round<totalRounds;round++){
+    var hop=rounds[round];
+    var numFrames=Math.floor((n-fftSize2)/hop);
+    var pctStart=62+round/totalRounds*32;
+    var pctEnd=62+(round+1)/totalRounds*32;
+
+    postMessage({type:'progress',label:'FFT Runde '+(round+1)+'/'+totalRounds+'…',pct:Math.round(pctStart)});
+
+    var spectroData=new Uint8Array(numFrames*bins2);
+    var stereoSpectroData=new Int8Array(numFrames*bins2);
+    var fluxArr=new Float32Array(numFrames);
+    // 8-band flux arrays (same bands as stereo panorama)
+    var fluxBands=[[20,40],[40,80],[80,160],[160,315],[315,630],[630,1250],[1250,2500],[2500,20000]];
+    var nFluxBands=8;
+    var bandFluxArr=[];
+    for(var fb=0;fb<nFluxBands;fb++)bandFluxArr.push(new Float32Array(numFrames));
+    var prevMagBands=null;
+    var harmArr=new Float32Array(numFrames);
+    var pitchArr=new Float32Array(numFrames);
+    var chromaFlat=new Float32Array(numFrames*12);
+    var inharmonArr=new Float32Array(numFrames);
+    var entropyArr=new Float32Array(numFrames);
+    var centroidArr=new Float32Array(numFrames);
+    var rolloffArr=new Float32Array(numFrames);
+    var tiltArr=new Float32Array(numFrames);       // spectral tilt: bass/treble ratio
+    var harmDensArr=new Float32Array(numFrames);   // harmonic density: active partials count
+    var prevMag=null;
+
+    // frequency bin boundaries for tilt
+    var bassHi=Math.round(500/sr*fftSize2);
+    var trebleLo=Math.round(2000/sr*fftSize2);
+
+    for(var frame=0;frame<numFrames;frame++){
+      var mag=rfft(ch,frame*hop,fftSize2);
+      var magR=rfft(right,frame*hop,fftSize2);
+
+      // spectro (mono)
+      for(var k=0;k<bins2;k++){
+        var db=(20*Math.log10(mag[k]+1e-9)+80)/80;
+        spectroData[frame*bins2+k]=Math.max(0,Math.min(255,Math.round(db*255)));
+      }
+
+      // stereo spectro: L-R normalised to -127..+127
+      // positive = left dominant, negative = right dominant
+      for(var k=0;k<bins2;k++){
+        var l=mag[k],r=magR[k],sum=l+r;
+        var lr=sum>1e-10?(l-r)/sum:0; // -1..+1
+        stereoSpectroData[frame*bins2+k]=Math.max(-127,Math.min(127,Math.round(lr*127)));
+      }
+
+      // flux — global and per-band
+      if(prevMag){
+        var fl=0;
+        for(var k=0;k<bins2;k++){var d=mag[k]-prevMag[k];fl+=d*d;}
+        fluxArr[frame]=Math.sqrt(fl);
+        // per-band flux
+        if(prevMagBands){
+          for(var fb=0;fb<nFluxBands;fb++){
+            var kLo2=Math.round(fluxBands[fb][0]/sr*fftSize2);
+            var kHi2=Math.min(Math.round(fluxBands[fb][1]/sr*fftSize2),bins2);
+            if(kHi2<=kLo2)kHi2=kLo2+1;
+            var bfl=0;
+            for(var k=kLo2;k<kHi2;k++){var d=mag[k]-prevMagBands[k];bfl+=d*d;}
+            bandFluxArr[fb][frame]=Math.sqrt(bfl/(kHi2-kLo2));
+          }
+        }
+      }
+      prevMag=mag;
+      prevMagBands=mag;
+
+      // harmonicity + pitch via HPS — multi-F0 with spectral subtraction
+      var totalE=0;for(var k=0;k<bins2;k++)totalE+=mag[k]*mag[k];
+      var f0=hpsPitch(mag,sr,fftSize2);
+      var f0bin=f0>0?Math.round(f0/sr*fftSize2):0;
+      var harmE=0;
+      if(f0bin>0){for(var h=1;h<=6;h++){var hb=Math.round(f0bin*h);if(hb<bins2)harmE+=mag[hb]*mag[hb];}}
+      harmArr[frame]=totalE>0?Math.min(1,harmE/totalE*4):0;
+      pitchArr[frame]=f0>0?f0:0;
+
+
+
+      // inharmonicity
+      var inharmVal=0;
+      if(f0bin>0){
+        var nPart=0;
+        for(var h=2;h<=8;h++){
+          var idealBin=f0bin*h;if(idealBin>=bins2)break;
+          var searchW=Math.max(1,Math.round(f0bin*0.1));
+          var peakBin=idealBin,peakMag=0;
+          for(var kb=Math.max(0,idealBin-searchW);kb<=Math.min(bins2-1,idealBin+searchW);kb++){if(mag[kb]>peakMag){peakMag=mag[kb];peakBin=kb;}}
+          if(peakMag>0){inharmVal+=Math.abs(peakBin-idealBin)/idealBin;nPart++;}
+        }
+        if(nPart>0)inharmVal/=nPart;
+      }
+
+      // spectral entropy
+      var entropyVal=0;
+      if(totalE>0){for(var k=0;k<bins2;k++){var p=mag[k]*mag[k]/totalE;if(p>0)entropyVal-=p*Math.log(p);}entropyVal/=Math.log(bins2);}
+
+      // centroid + rolloff per frame
+      var cnum2=0,cden2=0;
+      for(var k=0;k<bins2;k++){var f2=k*sr/fftSize2;cnum2+=f2*mag[k];cden2+=mag[k];}
+      centroidArr[frame]=cden2>0?cnum2/cden2:0;
+      var rolloffFrame=sr/2,tot2=cden2,cum2=0,thr3=tot2*0.85;
+      for(var k=0;k<bins2;k++){cum2+=mag[k];if(cum2>=thr3){rolloffFrame=k*sr/fftSize2;break;}}
+      rolloffArr[frame]=rolloffFrame;
+
+      inharmonArr[frame]=inharmVal;
+      entropyArr[frame]=entropyVal;
+
+      // spectral tilt: log ratio of bass energy to treble energy
+      var bassE=0,trebleE=0;
+      for(var k=1;k<bassHi;k++)bassE+=mag[k];
+      for(var k=trebleLo;k<bins2;k++)trebleE+=mag[k];
+      // tilt > 0 = bass dominant, < 0 = treble dominant, 0 = balanced
+      tiltArr[frame]=(bassE+trebleE)>0?(bassE-trebleE)/(bassE+trebleE):0;
+
+      // harmonic density: count partials above noise floor (10% of f0 magnitude)
+      var harmDens=0;
+      if(f0bin>0){
+        var noiseFloor=mag[f0bin]*0.1;
+        for(var h=1;h<=16;h++){var hb=Math.round(f0bin*h);if(hb>=bins2)break;if(mag[hb]>noiseFloor)harmDens++;}
+      }
+      harmDensArr[frame]=harmDens;
+
+
+      // chroma
+      var ch12=new Float32Array(12);
+      for(var k=1;k<bins2;k++){
+        var freq=k*sr/fftSize2;if(freq<80||freq>4000)continue;
+        var midi=Math.round(12*Math.log2(freq/440)+69);
+        ch12[((midi%12)+12)%12]+=mag[k];
+      }
+      var cmx2=Math.max.apply(null,Array.prototype.slice.call(ch12));
+      if(cmx2>0)for(var i=0;i<12;i++)chromaFlat[frame*12+i]=ch12[i]/cmx2;
+    }
+
+    // smooth pitch
+    for(var i=1;i<pitchArr.length-1;i++){if(pitchArr[i]===0)pitchArr[i]=(pitchArr[i-1]+pitchArr[i+1])/2;}
+
+    // note stability
+    var noteStabArr=new Float32Array(numFrames);
+    var runLen=1;
+    for(var i=1;i<numFrames;i++){
+      var p1=pitchArr[i-1],p2=pitchArr[i];
+      var semitones=(p1>0&&p2>0)?Math.abs(12*Math.log2(p2/p1)):0;
+      if(semitones<1.5){runLen++;}else{for(var j=i-runLen;j<i;j++)noteStabArr[j]=runLen;runLen=1;}
+    }
+    for(var j=numFrames-runLen;j<numFrames;j++)noteStabArr[j]=runLen;
+    var maxStab=0;for(var i=0;i<numFrames;i++){if(noteStabArr[i]>maxStab)maxStab=noteStabArr[i];}maxStab=maxStab||1;
+    for(var i=0;i<numFrames;i++)noteStabArr[i]/=maxStab;
+
+    // chord change rate
+    var chordChanges=0,prevChordIdx=-1;
+    for(var f=0;f<numFrames;f++){
+      var c12s=chromaFlat.subarray(f*12,(f+1)*12);
+      var bestC=-1,bestCI=0;
+      for(var root=0;root<12;root++){
+        var maj=c12s[root]+c12s[(root+4)%12]*0.8+c12s[(root+7)%12]*0.9;
+        var min=c12s[root]+c12s[(root+3)%12]*0.8+c12s[(root+7)%12]*0.9;
+        if(maj>bestC){bestC=maj;bestCI=root*2;}if(min>bestC){bestC=min;bestCI=root*2+1;}
+      }
+      if(bestCI!==prevChordIdx&&prevChordIdx>=0)chordChanges++;prevChordIdx=bestCI;
+    }
+    var chordRate=numFrames>0?chordChanges/(numFrames*hop/sr):0;
+
+    // mean scalars
+    var meanCentroid=0,meanRolloff=0,meanEntropy=0,meanInharm=0,meanTilt=0,meanHarmDens=0,cnt3=0;
+    for(var i=0;i<numFrames;i++){if(centroidArr[i]>0){meanCentroid+=centroidArr[i];meanRolloff+=rolloffArr[i];meanEntropy+=entropyArr[i];meanInharm+=inharmonArr[i];meanTilt+=tiltArr[i];meanHarmDens+=harmDensArr[i];cnt3++;}}
+    if(cnt3>0){meanCentroid/=cnt3;meanRolloff/=cnt3;meanEntropy/=cnt3;meanInharm/=cnt3;meanTilt/=cnt3;meanHarmDens/=cnt3;}
+
+    // mode detection
+    var chromaSum=new Float32Array(12);
+    for(var f=0;f<numFrames;f++)for(var i=0;i<12;i++)chromaSum[i]+=chromaFlat[f*12+i];
+    var cmxS=Math.max.apply(null,Array.prototype.slice.call(chromaSum));
+    if(cmxS>0)for(var i=0;i<12;i++)chromaSum[i]/=cmxS;
+    var modeIntervals={'Ionisch':[0,2,4,5,7,9,11],'Dorisch':[0,2,3,5,7,9,10],'Phrygisch':[0,1,3,5,7,8,10],'Lydisch':[0,2,4,6,7,9,11],'Mixolydisch':[0,2,4,5,7,9,10],'Äolisch':[0,2,3,5,7,8,10],'Lokrisch':[0,1,3,5,6,8,10]};
+    var notesR=['C','C#','D','D#','E','F','F#','G','G#','A','A#','B'];
+    var bestModeScore=-Infinity,bestMode='',bestModeKey='';
+    for(var root=0;root<12;root++){
+      for(var modeName in modeIntervals){
+        var intervals=modeIntervals[modeName];
+        var score=0;for(var j=0;j<intervals.length;j++)score+=chromaSum[(root+intervals[j])%12];
+        var scaleSet={};for(var j=0;j<intervals.length;j++)scaleSet[(root+intervals[j])%12]=1;
+        for(var i=0;i<12;i++)if(!scaleSet[i])score-=chromaSum[i]*0.5;
+        if(score>bestModeScore){bestModeScore=score;bestMode=modeName;bestModeKey=notesR[root];}
+      }
+    }
+
+    // key from chroma — top 2 candidates with confidence
+    var keyScores=[];
+    for(var root=0;root<12;root++){
+      for(var mode=0;mode<2;mode++){
+        var prof=mode===0?majorP:minorP;
+        var sm3=0,sp3=0;for(var i=0;i<12;i++){sm3+=chromaSum[(i+root)%12];sp3+=prof[i];}
+        var mn3=sm3/12,pn3=sp3/12,num3=0,dc3=0,dp3=0;
+        for(var i=0;i<12;i++){num3+=(chromaSum[(i+root)%12]-mn3)*(prof[i]-pn3);dc3+=Math.pow(chromaSum[(i+root)%12]-mn3,2);dp3+=Math.pow(prof[i]-pn3,2);}
+        var r3=dc3>0&&dp3>0?num3/Math.sqrt(dc3*dp3):0;
+        keyScores.push({key:notesR[root]+(mode===0?' Dur':' Moll'),score:r3});
+      }
+    }
+    keyScores.sort(function(a,b){return b.score-a.score;});
+    var bestKeyR=keyScores[0].key;
+    var keyConf=keyScores[0].score;
+    var key2=keyScores[1].key,key2Score=keyScores[1].score;
+    // show second candidate if within 10% of best
+    var keyDisplay=bestKeyR;
+    if(key2Score>keyConf*0.9)keyDisplay=bestKeyR+' / '+key2;
+
+    var isFinal=round===totalRounds-1;
+    // build transferable list for zero-copy transfer
+    var transferList=[
+      fluxArr.buffer,harmArr.buffer,pitchArr.buffer,
+      ...bandFluxArr.map(function(a){return a.buffer;}),
+      chromaFlat.buffer,entropyArr.buffer,inharmonArr.buffer,noteStabArr.buffer,
+      tiltArr.buffer,harmDensArr.buffer,
+      centroidArr.buffer,rolloffArr.buffer
+    ];
+    var msg={
+      type:'fft_partial',round:round+1,totalRounds:totalRounds,isFinal:isFinal,
+      numFrames:numFrames,fftSize:fftSize2,dur:dur,
+      flux:fluxArr,bandFlux:bandFluxArr,harm:harmArr,pitch:pitchArr,chroma:chromaFlat,
+      entropy:entropyArr,inharm:inharmonArr,noteStab:noteStabArr,
+      tilt:tiltArr,harmDens:harmDensArr,
+      centroidCurve:centroidArr,rolloffCurve:rolloffArr,
+      scalars:{centroid:meanCentroid,rolloff:meanRolloff,entropy:meanEntropy,
+               inharm:meanInharm,chordRate:chordRate,mode:bestModeKey+' '+bestMode,
+               tilt:meanTilt,harmDens:meanHarmDens},
+      key:keyDisplay,pct:Math.round(pctEnd)
+    };
+    // only send heavy spectro data on final round (saves ~200MB transfer)
+    if(isFinal){
+      msg.frames=spectroData;
+      msg.stereoFrames=stereoSpectroData;
+      transferList.push(spectroData.buffer,stereoSpectroData.buffer);
+    } else {
+      // send small downsampled spectro for early preview
+      var previewStep=Math.max(1,Math.floor(numFrames/2000));
+      var previewFrames=Math.floor(numFrames/previewStep);
+      var previewData=new Uint8Array(previewFrames*bins2);
+      for(var pf=0;pf<previewFrames;pf++){
+        var sf=pf*previewStep;
+        for(var k=0;k<bins2;k++)previewData[pf*bins2+k]=spectroData[sf*bins2+k];
+      }
+      msg.frames=previewData;
+      msg.previewStep=previewStep;
+      msg.numFramesFull=numFrames;
+      transferList.push(previewData.buffer);
+    }
+    postMessage(msg,transferList);
+  }
+};
+`;}
+
+// --- DRAWING FUNCTIONS ---
+
+function drawTimeAxis(ctx,w,h,dur,xOffset){
+  var xOff=xOffset||0;
+  var vs=viewStart,ve=viewEnd;
+  var visibleDur=(ve-vs)*dur;
+  var tStart=vs*dur,tEnd=ve*dur;
+  ctx.font='10px system-ui';
+  var step=Math.ceil(visibleDur/8);
+  if(step<1)step=1;
+  for(var t=Math.floor(tStart/step)*step;t<=tEnd;t+=step){
+    var x=Math.round((t/dur-vs)/(ve-vs)*w)+xOff;
+    if(x<xOff||x>w+xOff)continue;
+    ctx.fillStyle='rgba(255,255,255,0.04)';ctx.fillRect(x,0,1,h);
+    ctx.fillStyle='#555';ctx.fillText(fmt(t),x+2,h-3);
+  }
+}
+
+function drawCurve(id,data,color,h,dur,gridCb,fixedMin,fixedMax){
+  var c=document.getElementById(id);c.width=c.offsetWidth||820;c.height=h;
+  var ctx=c.getContext('2d');ctx.fillStyle='#0a0a0a';ctx.fillRect(0,0,c.width,c.height);
+  var arr=Array.from(data);
+  var vs=viewStart,ve=viewEnd;
+  var i0=Math.floor(vs*arr.length),i1=Math.ceil(ve*arr.length);
+  var slice=arr.slice(i0,i1);
+  if(!slice.length)return;
+  var mn=fixedMin!==undefined?fixedMin:Math.min.apply(null,slice);
+  var mx=fixedMax!==undefined?fixedMax:Math.max.apply(null,slice);
+  var range=mx-mn||1;
+  if(gridCb)gridCb(ctx,c.width,c.height,mn,mx);
+  ctx.strokeStyle=color;ctx.lineWidth=1.5;ctx.beginPath();
+  for(var i=0;i<slice.length;i++){
+    var x=i/slice.length*c.width,y=c.height-(slice[i]-mn)/range*c.height*0.88-c.height*0.06;
+    if(i===0)ctx.moveTo(x,y);else ctx.lineTo(x,y);
+  }
+  ctx.stroke();
+  markReady(id);
+  drawTimeAxis(ctx,c.width,c.height,dur);
+}
+
+function drawEnergyRamp(dur){
+  var c=document.getElementById('energy-canvas');
+  if(!c)return;
+  c.width=c.offsetWidth||820;c.height=70;
+  var ctx=c.getContext('2d');ctx.fillStyle='#0a0a0a';ctx.fillRect(0,0,c.width,c.height);
+  var vs=viewStart,ve=viewEnd;
+
+  // use raw samples when zoom is high enough (visible window < 5s)
+  var visibleDur=(ve-vs)*dur;
+  if(visibleDur<5&&window._audioSamples&&window._audioSR){
+    var samples=window._audioSamples,sr2=window._audioSR;
+    var s0=Math.floor(vs*samples.length),s1=Math.ceil(ve*samples.length);
+    var samplesPerPx=Math.max(1,Math.floor((s1-s0)/c.width));
+    // compute RMS per pixel column
+    var cols=[];
+    for(var x=0;x<c.width;x++){
+      var si=s0+Math.floor(x/c.width*(s1-s0));
+      var end=Math.min(si+samplesPerPx,s1);
+      var rms=0;for(var j=si;j<end;j++)rms+=samples[j]*samples[j];
+      cols.push(Math.sqrt(rms/Math.max(1,end-si)));
+    }
+    var mx=Math.max.apply(null,cols)||1;
+    // smooth for slope
+    var sm=cols.map(function(_,i){var s=0,cnt=0;for(var j=Math.max(0,i-5);j<=Math.min(cols.length-1,i+5);j++){s+=cols[j];cnt++;}return s/cnt;});
+    var thresh=mx*0.02;
+    for(var x=0;x<c.width-1;x++){
+      var y1=c.height-(cols[x]/mx)*c.height*0.88-4;
+      var y2=c.height-(cols[x+1]/mx)*c.height*0.88-4;
+      var slope=sm[Math.min(x+4,sm.length-1)]-sm[Math.max(x-4,0)];
+      ctx.strokeStyle=slope>thresh?'#d07030':slope<-thresh?'#3070b0':'#555';
+      ctx.lineWidth=1;ctx.beginPath();ctx.moveTo(x,y1);ctx.lineTo(x+1,y2);ctx.stroke();
+    }
+    // draw zero-crossings as faint markers at very high zoom (< 0.1s visible)
+    if(visibleDur<0.1){
+      ctx.strokeStyle='rgba(255,255,100,0.3)';ctx.lineWidth=0.5;
+      var prev=samples[s0]>=0;
+      for(var j=s0+1;j<s1;j++){
+        var cur=samples[j]>=0;
+        if(cur!==prev){
+          var x=Math.round((j-s0)/(s1-s0)*c.width);
+          ctx.beginPath();ctx.moveTo(x,0);ctx.lineTo(x,c.height);ctx.stroke();
+        }
+        prev=cur;
+      }
+    }
+  } else {
+    // frame-based — background: zoom-smoothed raw curve (gray)
+    // foreground: median-slope ramp coloring
+    var arr=window._chartData.energy?Array.from(window._chartData.energy):[];
+    if(!arr.length){drawTimeAxis(ctx,c.width,c.height,dur);return;}
+    var i0=Math.floor(vs*arr.length),i1=Math.ceil(ve*arr.length);
+    var slice=arr.slice(i0,i1);
+    if(!slice.length){drawTimeAxis(ctx,c.width,c.height,dur);return;}
+
+    var visibleDur2=(ve-vs)*dur;
+    // zoom-adaptive smoothing for background display
+    var bgWin=visibleDur2>30?40:visibleDur2>10?15:visibleDur2>3?4:1;
+    var bgSmooth=slice.map(function(_,i){
+      var s=0,cnt=0;
+      for(var j=Math.max(0,i-bgWin);j<=Math.min(slice.length-1,i+bgWin);j++){s+=slice[j];cnt++;}
+      return s/cnt;
+    });
+
+    // median window for slope detection (ignores percussion spikes)
+    var smWin=visibleDur2>30?40:visibleDur2>10?20:visibleDur2>5?8:3;
+    function slidingMedian(a,w){
+      return a.map(function(_,i){
+        var win=a.slice(Math.max(0,i-w),Math.min(a.length,i+w+1)).slice().sort(function(x,y){return x-y;});
+        return win[Math.floor(win.length/2)];
+      });
+    }
+    var medSlice=slidingMedian(slice,smWin);
+
+    var mn=Math.min.apply(null,slice),mx=Math.max.apply(null,slice),range=mx-mn||1;
+    var slopeThresh=(Math.max.apply(null,medSlice)-Math.min.apply(null,medSlice))*0.015;
+
+    // Y labels — dynamic from actual range
+    ctx.font='8px system-ui';
+    var ySteps=4;
+    for(var yi=0;yi<=ySteps;yi++){
+      var yv=mn+yi/ySteps*range;
+      var yy=c.height-(yv-mn)/range*c.height*0.88-4;
+      if(yy<4||yy>c.height-2)continue;
+      ctx.fillStyle='rgba(255,255,255,0.06)';ctx.fillRect(0,Math.round(yy),c.width,1);
+      ctx.fillStyle='rgba(255,255,255,0.25)';ctx.fillText((yv*1000).toFixed(1),3,Math.round(yy)-2);
+    }
+
+    // draw background: raw signal zoom-averaged per pixel column
+    ctx.strokeStyle='rgba(160,160,160,0.5)';ctx.lineWidth=1;ctx.beginPath();
+    for(var col=0;col<c.width;col++){
+      // average raw values that map to this pixel
+      var fi0=Math.floor(col/c.width*slice.length);
+      var fi1=Math.min(Math.ceil((col+1)/c.width*slice.length),slice.length);
+      var s=0,cnt=0;for(var j=fi0;j<fi1;j++){s+=slice[j];cnt++;}
+      var v=cnt>0?s/cnt:slice[fi0]||0;
+      var y=c.height-(v-mn)/range*c.height*0.88-4;
+      if(col===0)ctx.moveTo(col,y);else ctx.lineTo(col,y);
+    }
+    ctx.stroke();
+
+    // draw foreground: ramp-colored smoothed line
+    for(var i=0;i<bgSmooth.length-1;i++){
+      var x1=i/bgSmooth.length*c.width,x2=(i+1)/bgSmooth.length*c.width;
+      var y1=c.height-(bgSmooth[i]-mn)/range*c.height*0.88-4;
+      var y2=c.height-(bgSmooth[i+1]-mn)/range*c.height*0.88-4;
+      var slopeW=medSlice[Math.min(i+Math.floor(smWin/2),medSlice.length-1)]-medSlice[Math.max(i-Math.floor(smWin/2),0)];
+      ctx.strokeStyle=slopeW>slopeThresh?'#d07030':slopeW<-slopeThresh?'#3070b0':'#888';
+      ctx.lineWidth=2;ctx.beginPath();ctx.moveTo(x1,y1);ctx.lineTo(x2,y2);ctx.stroke();
+    }
+  }
+  drawTimeAxis(ctx,c.width,c.height,dur);
+}
+
+function drawCurveWithMask(id,data,color,h,dur,energyMaskArr,gridCb,fixedMin,fixedMax){
+  var c=document.getElementById(id);c.width=c.offsetWidth||820;c.height=h;
+  var ctx=c.getContext('2d');ctx.fillStyle='#0a0a0a';ctx.fillRect(0,0,c.width,c.height);
+  var arr=Array.from(data);
+  var vs=viewStart,ve=viewEnd;
+  var i0=Math.floor(vs*arr.length),i1=Math.ceil(ve*arr.length);
+  var slice=arr.slice(i0,i1);
+  if(!slice.length)return;
+  // energy mask: compute threshold from global energy
+  var energyMask=null;
+  if(energyMaskArr){
+    var es=Array.from(energyMaskArr).slice().sort(function(a,b){return a-b;});
+    var p5e=es[Math.floor(es.length*0.05)]*3;
+    // resample energy mask to same length as slice
+    var eArr=Array.from(energyMaskArr);
+    energyMask=slice.map(function(_,i){
+      var ei=Math.floor((i0+i)/arr.length*eArr.length);
+      return eArr[Math.min(ei,eArr.length-1)]<p5e;
+    });
+  }
+  // zoom-adaptive smoothing
+  var visibleDur=(ve-vs)*dur;
+  var smWin=visibleDur>30?20:visibleDur>10?8:2;
+  var smSlice=slice.map(function(_,i){var s=0,cnt=0;for(var j=Math.max(0,i-smWin);j<=Math.min(slice.length-1,i+smWin);j++){s+=slice[j];cnt++;}return s/cnt;});
+  var mn=fixedMin!==undefined?fixedMin:Math.min.apply(null,smSlice);
+  var mx2=fixedMax!==undefined?fixedMax:Math.max.apply(null,smSlice);
+  var range=mx2-mn||1;
+  if(gridCb)gridCb(ctx,c.width,h,mn,mx2);
+  ctx.strokeStyle=color;ctx.lineWidth=1.5;ctx.beginPath();
+  var penDown=false;
+  for(var i=0;i<smSlice.length;i++){
+    if(energyMask&&energyMask[i]){penDown=false;continue;}
+    var x=i/smSlice.length*c.width,y=h-(smSlice[i]-mn)/range*h*0.88-4;
+    if(!penDown){ctx.moveTo(x,y);penDown=true;}else ctx.lineTo(x,y);
+  }
+  ctx.stroke();
+  markReady(id);
+  drawTimeAxis(ctx,c.width,h,dur);
+}
+
+function drawEnvelope(energy,lufs,crest,onsets,dur,sr){
+  storeChartData('energy-canvas',energy);
+  storeChartData('lufs-canvas',lufs);
+  storeChartData('crest-canvas',crest);
+  storeChartData('onset-canvas',onsets);
+  drawEnergyRamp(dur);
+  // lufs with dB grid
+  drawCurve('lufs-canvas',lufs,'#60c0a0',80,dur,function(ctx,w,h,mn,mx){
+    ctx.font='10px system-ui';
+    [-6,-12,-18,-24,-30,-40].forEach(function(db){
+      if(db<mn||db>mx)return;
+      var y=h-(db-mn)/(mx-mn)*h*0.88-h*0.06;
+      ctx.fillStyle='rgba(255,255,255,0.05)';ctx.fillRect(0,Math.round(y),w,1);
+      ctx.fillStyle='#555';ctx.fillText(db+'dB',2,Math.round(y)-2);
+    });
+  });
+  // crest with energy mask, fixed scale 1..15
+  drawCurveWithMask('crest-canvas',crest,'#aaaaaa',70,dur,energy,function(ctx,w,h){
+    [{v:1,l:'1'},{v:3,l:'3'},{v:6,l:'6'},{v:10,l:'10'},{v:15,l:'15'}].forEach(function(r){
+      var y=h-(r.v-1)/(15-1)*h*0.88-h*0.06;
+      ctx.fillStyle='rgba(255,255,255,0.06)';ctx.fillRect(0,Math.round(y),w,1);
+      ctx.font='8px system-ui';ctx.fillStyle='rgba(255,255,255,0.35)';ctx.fillText(r.l,3,Math.round(y)-2);
+    });
+  },1,15);
+  // onsets with energy mask + dynamic Y labels
+  drawCurveWithMask('onset-canvas',onsets,'#aaaaaa',70,dur,energy,function(ctx,w,h,mn,mx){
+    var steps=[Math.round(mx*0.25),Math.round(mx*0.5),Math.round(mx*0.75),Math.round(mx)];
+    steps.forEach(function(v){
+      if(v<=0)return;
+      var y=h-(v-mn)/(mx-mn)*h*0.88-h*0.06;
+      ctx.fillStyle='rgba(255,255,255,0.06)';ctx.fillRect(0,Math.round(y),w,1);
+      ctx.font='8px system-ui';ctx.fillStyle='rgba(255,255,255,0.35)';ctx.fillText(v+'/s',3,Math.round(y)-2);
+    });
+  });
+}
+
+function drawBPMCurve(bpms,bpmsIOI,bpmsMedian,dur){
+  storeChartData('bpmcurve-canvas',bpms);
+  window._bpmsIOI=bpmsIOI;
+  window._bpmsMedian=bpmsMedian;
+  var c=document.getElementById('bpmcurve-canvas');c.width=c.offsetWidth||820;c.height=80;
+  var ctx=c.getContext('2d');ctx.fillStyle='#0a0a0a';ctx.fillRect(0,0,c.width,c.height);
+  var vs=viewStart,ve=viewEnd;
+  function sliceArr(arr){
+    if(!arr||!arr.length)return[];
+    var a=Array.from(arr),i0=Math.floor(vs*a.length),i1=Math.ceil(ve*a.length);
+    return a.slice(i0,i1);
+  }
+  var sa=sliceArr(bpms),sb=sliceArr(bpmsIOI),sc2=sliceArr(bpmsMedian);
+  var all=sa.concat(sb).concat(sc2).filter(function(v){return v>0;});
+  if(!all.length)return;
+  var minB=Math.min.apply(null,all)-5,maxB=Math.max.apply(null,all)+5,range=maxB-minB||1;
+  ctx.font='10px system-ui';
+  for(var b=Math.ceil(minB/10)*10;b<=maxB;b+=10){
+    var y=c.height-(b-minB)/range*c.height*0.88-4;
+    ctx.fillStyle='rgba(255,255,255,0.04)';ctx.fillRect(0,Math.round(y),c.width,1);
+    ctx.fillStyle='#555';ctx.fillText(b,2,Math.round(y)-2);
+  }
+  function drawLine(arr,color,width){
+    if(!arr||!arr.length)return;
+    ctx.strokeStyle=color;ctx.lineWidth=width||1.5;
+    ctx.beginPath();
+    var penDown=false;
+    for(var i=0;i<arr.length;i++){
+      if(isNaN(arr[i])){penDown=false;continue;}
+      var x=i/arr.length*c.width,y=c.height-(arr[i]-minB)/range*c.height*0.88-4;
+      if(!penDown){ctx.moveTo(x,y);penDown=true;}else ctx.lineTo(x,y);
+    }
+    ctx.stroke();
+  }
+  drawLine(sc2,'#f5a050',2);   // orange thick: IOI Median (best)
+  drawLine(sb,'#a03020',1.5); // rotbraun medium: IOI Peak-Picking
+  drawLine(sa,'#aaaaaa',1);   // grau thin: Autokorrelation (worst)
+  markReady('bpmcurve-canvas');
+  drawTimeAxis(ctx,c.width,c.height,dur);
+}
+
+function drawStereoCurve(lBands,rBands,energyP95,dur){
+  var c=document.getElementById('stereo-canvas');
+  var nBands=8;
+  c.width=c.offsetWidth||820;c.height=nBands*24;
+  var ctx=c.getContext('2d');ctx.fillStyle='#0a0a0a';ctx.fillRect(0,0,c.width,c.height);
+  var vs=viewStart,ve=viewEnd;
+  var nFrames=lBands[0].length;
+  var i0=Math.floor(vs*nFrames),i1=Math.ceil(ve*nFrames);
+  if(i1<=i0)return;
+  var visFrames=i1-i0;
+  var gP95=energyP95||1;
+  var bandNames=['20–40Hz','40–80Hz','80–160Hz','160–315Hz','315–630Hz','630–1250Hz','1250–2500Hz','2500–20kHz'];
+  var bandH=c.height/nBands;
+  var barW=Math.max(1,c.width/visFrames);
+
+  // per-band p95 for bar height normalization
+  var bandP95=new Float32Array(nBands);
+  for(var b=0;b<nBands;b++){
+    var vals=[];
+    for(var i=i0;i<i1&&i<nFrames;i++){
+      var l=lBands[b][i],r=rBands[b][i];
+      var total=l+r;
+      if(total>0)vals.push(Math.abs(l-r)/total); // normalized diff
+    }
+    if(!vals.length){bandP95[b]=1;continue;}
+    vals.sort(function(a,b){return a-b;});
+    bandP95[b]=vals[Math.floor(vals.length*0.95)]||0.01;
+    if(bandP95[b]<0.01)bandP95[b]=0.01;
+  }
+
+  for(var b=0;b<nBands;b++){
+    var drawRow=nBands-1-b;
+    var yTop=drawRow*bandH;
+    var mid=yTop+bandH/2;
+
+    ctx.fillStyle=drawRow%2===0?'rgba(255,255,255,0.018)':'rgba(0,0,0,0)';
+    ctx.fillRect(0,yTop,c.width,bandH);
+    ctx.font='8px system-ui';
+    ctx.fillStyle='rgba(255,255,255,0.3)';
+    ctx.fillText(bandNames[b],3,yTop+9);
+    ctx.fillStyle='rgba(255,255,255,0.12)';
+    ctx.fillRect(0,Math.round(mid),c.width,1);
+
+    var maxH=bandH*0.44;
+
+    for(var col=0;col<visFrames;col++){
+      var fi=i0+col;if(fi>=nFrames)break;
+      var l=lBands[b][fi],r=rBands[b][fi];
+      var total=l+r;
+      if(total<1e-8)continue;
+
+      // x = normalized L-R difference: -1..+1
+      var x=(l-r)/total;
+
+      // sign(x) * log(|x|+1) — vorzeichenerhaltende Log-Transformation
+      var xLog=x>=0?Math.log(x+1):-Math.log(-x+1);
+      // xLog range: log(2)≈0.693 max absolute
+
+      // bar height: log-transformed diff, per-band normalized
+      var diffAbs=Math.abs(x);
+      var logDiff=Math.log(diffAbs+1)/Math.log(2); // 0..1
+      var h=logDiff/Math.log(bandP95[b]+1)*Math.log(2)*maxH;
+      h=Math.max(1.5,Math.min(maxH,h));
+      if(diffAbs<0.02)continue;
+
+      // brightness from absolute energy (log-scaled, global p95)
+      var energy=(l+r)/(gP95*2);
+      var energyLog=Math.log(energy*9+1)/Math.log(10); // log10(1..10) → 0..1
+      var alpha=Math.max(0.2,Math.min(1,energyLog*1.5));
+
+      var x0=col/visFrames*c.width;
+      if(xLog>0){
+        // left dominant: orange body + bright top edge
+        var rv=Math.round(255*alpha);
+        var gv=Math.round(80*alpha*0.5);
+        ctx.fillStyle='rgba('+rv+','+gv+',0,'+alpha.toFixed(2)+')';
+        ctx.fillRect(x0,mid-h,barW,h);
+        // bright top edge
+        var edgeA=Math.min(1,alpha*1.8);
+        ctx.fillStyle='rgba(255,200,100,'+edgeA.toFixed(2)+')';
+        ctx.fillRect(x0,mid-h,barW,1);
+      } else {
+        // right dominant: blue body + bright bottom edge
+        var bv=Math.round(255*alpha);
+        var gv=Math.round(80*alpha*0.4);
+        ctx.fillStyle='rgba(0,'+gv+','+bv+','+alpha.toFixed(2)+')';
+        ctx.fillRect(x0,mid,barW,h);
+        // bright bottom edge
+        var edgeA=Math.min(1,alpha*1.8);
+        ctx.fillStyle='rgba(100,200,255,'+edgeA.toFixed(2)+')';
+        ctx.fillRect(x0,mid+h-1,barW,1);
+      }
+    }
+  }
+
+  // band separators
+  for(var b=1;b<nBands;b++){
+    ctx.fillStyle='rgba(255,255,255,0.05)';
+    ctx.fillRect(0,b*bandH,c.width,1);
+  }
+
+  ctx.font='bold 9px system-ui';
+  ctx.fillStyle='rgba(255,120,0,0.8)';ctx.fillText('L',c.width-14,11);
+  ctx.fillStyle='rgba(0,120,255,0.8)';ctx.fillText('R',c.width-14,c.height-3);
+
+  drawTimeAxis(ctx,c.width,c.height,dur);
+}
+
+
+function drawVocalAnalysis(msg){
+  var c=document.getElementById('vocal-canvas');if(!c)return;
+  c.width=c.offsetWidth||820;c.height=80;
+  var ctx=c.getContext('2d');ctx.clearRect(0,0,c.width,c.height);
+  var male=Array.from(msg.male),female=Array.from(msg.female),formant=Array.from(msg.formant);
+  var n=male.length;if(!n)return;
+  var dur=msg.dur,hopSize=msg.hopSize||44100,sr=msg.hopSize?msg.hopSize:44100;
+
+  var vs=viewStart,ve=viewEnd;
+  var mid=c.height/2;
+
+  // max score for normalization
+  var maxScore=0;
+  for(var i=0;i<n;i++){if(male[i]>maxScore)maxScore=male[i];if(female[i]>maxScore)maxScore=female[i];}
+  maxScore=maxScore||1;
+
+  // zero line
+  ctx.fillStyle='rgba(255,255,255,0.15)';ctx.fillRect(0,mid,c.width,1);
+
+  // labels
+  ctx.font='8px system-ui';
+  ctx.fillStyle='rgba(255,140,0,0.6)';ctx.fillText('weiblich',3,10);
+  ctx.fillStyle='rgba(80,144,240,0.6)';ctx.fillText('männlich',3,c.height-3);
+
+  // draw per frame at correct time position
+  var frameDur=hopSize/(dur>0?dur*44100/dur:44100); // sec per frame
+  // recalc: each frame i starts at t = i*hopSize/sr seconds
+  var secPerFrame=hopSize/(dur>0?(n*hopSize/dur):44100);
+
+  for(var i=0;i<n;i++){
+    // window midpoint in normalized time
+    var tMid=(i+0.5)/n;
+    if(tMid<vs||tMid>ve)continue;
+    var x=(tMid-vs)/(ve-vs)*c.width;
+    var barW=Math.max(2,c.width/n*0.4); // thin bar, 40% of slot width
+
+    var ms=male[i]/maxScore,fs=female[i]/maxScore;
+    var hm=ms*mid*0.85,hf=fs*mid*0.85;
+
+    if(hf>0.5){
+      ctx.fillStyle='rgba(255,140,0,0.85)';
+      ctx.fillRect(x,mid-hf,barW,hf);
+      ctx.fillStyle='rgba(255,200,80,0.7)';
+      ctx.fillRect(x,mid-hf,barW,1);
+    }
+    if(hm>0.5){
+      ctx.fillStyle='rgba(80,144,240,0.85)';
+      ctx.fillRect(x,mid,barW,hm);
+      ctx.fillStyle='rgba(120,200,255,0.7)';
+      ctx.fillRect(x,mid+hm-1,barW,1);
+    }
+  }
+
+  // result label top right
+  var col=msg.gender==='weiblich'?'rgba(255,140,0,0.9)':msg.gender==='männlich'?'rgba(80,144,240,0.9)':'rgba(180,180,180,0.9)';
+  ctx.font='bold 10px system-ui';ctx.fillStyle=col;
+  ctx.fillText(msg.gender+(msg.f0>0?' · '+msg.f0+'Hz':''),c.width-90,12);
+
+  markReady('vocal-canvas');
+  drawTimeAxis(ctx,c.width,c.height,dur);
+}
+
+function drawTiltCurve(tilt,dur){
+  storeChartData('tilt-canvas',tilt);
+  var c=document.getElementById('tilt-canvas');c.width=c.offsetWidth||820;c.height=70;
+  var ctx=c.getContext('2d');ctx.fillStyle='#0a0a0a';ctx.fillRect(0,0,c.width,c.height);
+  var arr=Array.from(tilt);
+  var vs=viewStart,ve=viewEnd;
+  var i0=Math.floor(vs*arr.length),i1=Math.ceil(ve*arr.length);
+  var slice=arr.slice(i0,i1);if(!slice.length)return;
+  var mid=c.height/2;
+
+  // fixed scale ±1 — Y labels
+  ctx.font='8px system-ui';
+  [{v:-1,l:'+1 luftig'},{v:-0.5,l:'+0.5'},{v:0,l:'0'},{v:0.5,l:'-0.5'},{v:1,l:'-1 bassig'}].forEach(function(r){
+    var y=mid-r.v*mid*0.92;
+    ctx.fillStyle='rgba(255,255,255,r.v===0?0.15:0.05)'.replace('r.v===0?0.15:0.05',r.v===0?'0.15':'0.05');
+    ctx.fillRect(0,Math.round(y),c.width,1);
+    ctx.fillStyle='rgba(255,255,255,0.3)';
+    ctx.fillText(r.l,3,Math.round(y)-2);
+  });
+
+  // direction labels
+  ctx.fillStyle='rgba(48,112,176,0.6)';ctx.fillText('luftig',c.width-36,11);
+  ctx.fillStyle='rgba(208,112,48,0.6)';ctx.fillText('bassig',c.width-38,c.height-3);
+
+  // draw bars — fixed ±1 scale
+  var barW=Math.max(1,c.width/slice.length-0.5);
+  for(var i=0;i<slice.length;i++){
+    var x=i/slice.length*c.width;
+    var v=Math.max(-1,Math.min(1,slice[i])); // clamp to ±1
+    var bh=Math.abs(v)*mid*0.92;
+    // bass (v>0) goes DOWN (warm, heavy), treble (v<0) goes UP (light, airy)
+    ctx.fillStyle=v>0?'rgba(208,112,48,0.7)':'rgba(48,112,176,0.7)';
+    if(v>0)ctx.fillRect(x,mid,barW,bh);
+    else ctx.fillRect(x,mid-bh,barW,bh);
+  }
+  markReady('tilt-canvas');
+  drawTimeAxis(ctx,c.width,c.height,dur);
+}
+
+function drawFluxFromFrames(flux,bandFlux,dur){
+  storeChartData('flux-canvas',flux);
+  var c=document.getElementById('flux-canvas');
+  var nBands=8;
+  c.width=c.offsetWidth||820;c.height=nBands*20;
+  var ctx=c.getContext('2d');ctx.fillStyle='#0a0a0a';ctx.fillRect(0,0,c.width,c.height);
+  var vs=viewStart,ve=viewEnd;
+
+  // if no bandFlux yet, fall back to single global curve
+  if(!bandFlux||!bandFlux.length){
+    var arr=Array.from(flux);
+    var i0=Math.floor(vs*arr.length),i1=Math.ceil(ve*arr.length);
+    var sl=arr.slice(i0,i1);if(!sl.length)return;
+    var mx=Math.max.apply(null,sl)||1;
+    ctx.fillStyle='rgba(0,200,200,0.5)';
+    for(var i=0;i<sl.length;i++){
+      var x=i/sl.length*c.width,h=sl[i]/mx*c.height;
+      ctx.fillRect(x,c.height-h,Math.max(1,c.width/sl.length),h);
+    }
+    markReady('flux-canvas');drawTimeAxis(ctx,c.width,c.height,dur);return;
+  }
+
+  var bandNames=['20–40Hz','40–80Hz','80–160Hz','160–315Hz','315–630Hz','630–1250Hz','1250–2500Hz','2500–20kHz'];
+  var bandH=c.height/nBands;
+  var nFrames=bandFlux[0].length;
+  var i0=Math.floor(vs*nFrames),i1=Math.ceil(ve*nFrames);
+  var visFrames=i1-i0;if(visFrames<1)return;
+
+  // compute p95 per band for normalization
+  var bandP95=new Float32Array(nBands);
+  for(var b=0;b<nBands;b++){
+    var vals=[];
+    for(var i=i0;i<i1&&i<nFrames;i++)if(bandFlux[b][i]>0)vals.push(bandFlux[b][i]);
+    if(!vals.length){bandP95[b]=1;continue;}
+    vals.sort(function(a,b){return a-b;});
+    bandP95[b]=vals[Math.floor(vals.length*0.95)]||1;
+  }
+
+  var barW=Math.max(1,c.width/visFrames);
+
+  for(var b=0;b<nBands;b++){
+    // band 0=bass at bottom, band 7=treble at top
+    var drawRow=nBands-1-b;
+    var yTop=drawRow*bandH;
+
+    // alternating background
+    ctx.fillStyle=drawRow%2===0?'rgba(255,255,255,0.015)':'rgba(0,0,0,0)';
+    ctx.fillRect(0,yTop,c.width,bandH);
+
+    // band label
+    ctx.font='8px system-ui';
+    ctx.fillStyle='rgba(255,255,255,0.25)';
+    ctx.fillText(bandNames[b],3,yTop+9);
+
+    for(var col=0;col<visFrames;col++){
+      var fi=i0+col;if(fi>=nFrames)break;
+      var v=bandFlux[b][fi]/bandP95[b];
+      v=Math.min(1,v);
+      if(v<0.02)continue;
+      // log scale for better visual range
+      var vLog=Math.log(v*9+1)/Math.log(10);
+      var x=col/visFrames*c.width;
+      // cyan color — distinct from orange/blue of other charts
+      var alpha=Math.min(1,vLog*1.2);
+      var brightness=Math.round(180*vLog+40);
+      ctx.fillStyle='rgba('+Math.round(brightness*0.6)+','+brightness+','+brightness+','+alpha.toFixed(2)+')';
+      ctx.fillRect(x,yTop+1,barW,bandH-1);
+    }
+  }
+
+  // band separators
+  for(var b=1;b<nBands;b++){
+    ctx.fillStyle='rgba(255,255,255,0.04)';
+    ctx.fillRect(0,b*bandH,c.width,1);
+  }
+
+  markReady('flux-canvas');
+  drawTimeAxis(ctx,c.width,c.height,dur);
+}
+
+function drawHarmFromFrames(harm,entropy,dur){
+  storeChartData('harm-canvas',harm);
+  if(entropy)storeChartData('entropy-canvas',entropy);
+  var c=document.getElementById('harm-canvas');c.width=c.offsetWidth||820;c.height=80;
+  var ctx=c.getContext('2d');ctx.fillStyle='#0a0a0a';ctx.fillRect(0,0,c.width,c.height);
+  var vs=viewStart,ve=viewEnd;
+  var arr=Array.from(harm);
+  var i0=Math.floor(vs*arr.length),i1=Math.ceil(ve*arr.length);
+  var visFrames=i1-i0;if(visFrames<1)return;
+  var mid=c.height/2;
+  var barW=Math.max(1,c.width/visFrames);
+
+  // zero line
+  ctx.fillStyle='rgba(255,255,255,0.15)';ctx.fillRect(0,mid,c.width,1);
+
+  // labels
+  ctx.font='8px system-ui';
+  ctx.fillStyle='rgba(208,112,48,0.6)';ctx.fillText('Klang',4,10);
+  ctx.fillStyle='rgba(48,112,176,0.6)';ctx.fillText('Krach',4,c.height-3);
+  // entropy label right side
+  if(entropy){ctx.fillStyle='rgba(180,100,220,0.6)';ctx.fillText('Entropie',c.width-46,10);}
+
+  // draw bars per pixel column
+  var entArr=entropy?Array.from(entropy):null;
+  for(var col=0;col<c.width;col++){
+    var fi0=i0+Math.floor(col/c.width*visFrames);
+    var fi1=i0+Math.min(Math.ceil((col+1)/c.width*visFrames),visFrames);
+    // RMS average of harm values
+    var sum=0,cnt=0;
+    for(var j=fi0;j<fi1&&j<arr.length;j++){sum+=arr[j]*arr[j];cnt++;}
+    var v=cnt>0?Math.sqrt(sum/cnt):0;
+    var hTonal=v*mid*0.92;
+    var hNoise=(1-v)*mid*0.92;
+    // orange upward = tonal (Klang)
+    ctx.fillStyle='rgba(208,112,48,0.75)';
+    ctx.fillRect(col,mid-hTonal,barW,hTonal);
+    ctx.fillStyle='rgba(255,180,80,0.6)';
+    ctx.fillRect(col,mid-hTonal,barW,1);
+    // blue downward = noise (Krach)
+    ctx.fillStyle='rgba(48,112,176,0.75)';
+    ctx.fillRect(col,mid,barW,hNoise);
+    ctx.fillStyle='rgba(80,160,255,0.6)';
+    ctx.fillRect(col,mid+hNoise-1,barW,1);
+  }
+
+  // entropy overlay: thin purple line in upper half
+  // entropy 0=ordered(tonal) .. 1=chaotic(noisy), maps to 0..mid
+  if(entArr&&entArr.length){
+    ctx.strokeStyle='rgba(180,100,220,0.85)';ctx.lineWidth=1.5;ctx.beginPath();
+    var penDown=false;
+    for(var col=0;col<c.width;col++){
+      var fi0=i0+Math.floor(col/c.width*visFrames);
+      var fi1=i0+Math.min(Math.ceil((col+1)/c.width*visFrames),visFrames);
+      var esum=0,ecnt=0;
+      for(var j=fi0;j<fi1&&j<entArr.length;j++){esum+=entArr[j];ecnt++;}
+      var ev=ecnt>0?esum/ecnt:0;
+      // entropy drawn in upper half: 0=top, 1=midline
+      var ey=4+(1-ev)*(mid-8);
+      if(!penDown){ctx.moveTo(col,ey);penDown=true;}else ctx.lineTo(col,ey);
+    }
+    ctx.stroke();
+  }
+
+  markReady('harm-canvas');
+  drawTimeAxis(ctx,c.width,c.height,dur);
+}
+
+function drawInharmCurve(inharm,dur){
+  storeChartData('inharm-canvas',inharm);
+  var c=document.getElementById('inharm-canvas');c.width=c.offsetWidth||820;c.height=70;
+  var ctx=c.getContext('2d');ctx.fillStyle='#0a0a0a';ctx.fillRect(0,0,c.width,c.height);
+  var vs=viewStart,ve=viewEnd;
+  var arr=Array.from(inharm);
+  var i0=Math.floor(vs*arr.length),i1=Math.ceil(ve*arr.length);
+  var slice=arr.slice(i0,i1);if(!slice.length)return;
+
+  // fixed scale 0..0.15 — covers >99% of real values
+  // above 0.15 = extremely inharmonic (FM synthesis, bells)
+  var fixedMax=0.15;
+  var h=c.height;
+
+  // reference lines
+  ctx.font='8px system-ui';
+  [{v:0.05,label:'0.05'},{v:0.10,label:'0.10'}].forEach(function(ref){
+    var y=h-(ref.v/fixedMax)*h*0.9-4;
+    ctx.fillStyle='rgba(255,255,255,0.06)';ctx.fillRect(0,Math.round(y),c.width,1);
+    ctx.fillStyle='rgba(255,255,255,0.25)';ctx.fillText(ref.label,c.width-24,Math.round(y)-2);
+  });
+
+  // zoom-adaptive smoothing
+  var visibleDur=(ve-vs)*dur;
+  var smWin=visibleDur>30?12:visibleDur>10?5:1;
+
+  // draw per pixel column with smoothing
+  ctx.strokeStyle='#aaaaaa';ctx.lineWidth=1.5;ctx.beginPath();
+  var penDown=false;
+  for(var col=0;col<c.width;col++){
+    var fi0=i0+Math.floor(col/c.width*slice.length);
+    var fi1=i0+Math.min(Math.ceil((col+1)/c.width*slice.length),slice.length);
+    var sum=0,cnt=0;
+    for(var j=fi0-smWin;j<=fi1+smWin;j++){
+      var idx=j-i0;
+      if(idx>=0&&idx<slice.length&&slice[idx]>0){sum+=slice[idx];cnt++;}
+    }
+    if(!cnt){penDown=false;continue;}
+    var v=sum/cnt;
+    var y=h-(Math.min(v,fixedMax)/fixedMax)*h*0.9-4;
+    if(!penDown){ctx.moveTo(col,y);penDown=true;}else ctx.lineTo(col,y);
+  }
+  ctx.stroke();
+
+  markReady('inharm-canvas');
+  drawTimeAxis(ctx,c.width,h,dur);
+}
+
+function drawPitchFromFrames(pitch,sr,dur,noteStab){
+  storeChartData('pitch-canvas',pitch);
+  var c=document.getElementById('pitch-canvas');c.width=c.offsetWidth||820;c.height=120;
+  var ctx=c.getContext('2d');ctx.fillStyle='#0a0a0a';ctx.fillRect(0,0,c.width,c.height);
+  var vs=viewStart,ve=viewEnd;
+  var arr=Array.from(pitch);
+  var stabArr=noteStab?Array.from(noteStab):null;
+  var i0=Math.floor(vs*arr.length),i1=Math.ceil(ve*arr.length);
+  var slice=arr.slice(i0,i1);
+  var valid=slice.filter(function(v){return v>60&&v<2000;});
+  if(!valid.length){drawTimeAxis(ctx,c.width,c.height,dur);return;}
+
+  // Y: logarithmic, fixed to range of detected pitches + 1 octave padding
+  var minP=valid[0],maxP=valid[0];
+  for(var i=0;i<valid.length;i++){if(valid[i]<minP)minP=valid[i];if(valid[i]>maxP)maxP=valid[i];}
+  // snap to nearest semitone boundaries, add padding
+  var midiMin=Math.floor(12*Math.log2(minP/440)+69)-2;
+  var midiMax=Math.ceil(12*Math.log2(maxP/440)+69)+2;
+  midiMin=Math.max(24,midiMin);midiMax=Math.min(96,midiMax);
+  function freqToY(f){
+    var midi=12*Math.log2(f/440)+69;
+    return c.height-(midi-midiMin)/(midiMax-midiMin)*(c.height-12)-6;
+  }
+
+  // note grid lines + labels
+  var noteNames=['C','C#','D','D#','E','F','F#','G','G#','A','A#','B'];
+  ctx.font='8px system-ui';
+  for(var midi=midiMin;midi<=midiMax;midi++){
+    var freq=440*Math.pow(2,(midi-69)/12);
+    var y=Math.round(freqToY(freq));
+    var isC=midi%12===0;
+    ctx.fillStyle=isC?'rgba(255,255,255,0.08)':'rgba(255,255,255,0.03)';
+    ctx.fillRect(0,y,c.width,1);
+    if(isC){
+      ctx.fillStyle='rgba(255,255,255,0.35)';
+      ctx.fillText(noteNames[midi%12]+Math.floor(midi/12-1),3,y-2);
+    }
+  }
+
+  // Piano-Roll: group consecutive frames with same semitone into horizontal bars
+  // bar color: yellow=stable (long note), dimmer=unstable/ornamental
+  var visFrames=i1-i0;
+  var barW=Math.max(1,c.width/visFrames);
+  var barH=Math.max(2,c.height/(midiMax-midiMin)*0.7);
+
+  // build runs of same semitone
+  var runs=[]; // {midi, startCol, endCol, avgStab}
+  var curMidi=-1,curStart=0,stabSum=0,stabCnt=0;
+  for(var col=0;col<visFrames;col++){
+    var fi=i0+col;if(fi>=arr.length)break;
+    var f=arr[fi];
+    if(f<60||f>2000){
+      if(curMidi>=0){runs.push({midi:curMidi,s:curStart,e:col,stab:stabCnt?stabSum/stabCnt:0.5});curMidi=-1;stabSum=0;stabCnt=0;}
+      continue;
+    }
+    var m=Math.round(12*Math.log2(f/440)+69);
+    if(m!==curMidi){
+      if(curMidi>=0)runs.push({midi:curMidi,s:curStart,e:col,stab:stabCnt?stabSum/stabCnt:0.5});
+      curMidi=m;curStart=col;stabSum=0;stabCnt=0;
+    }
+    if(stabArr&&fi<stabArr.length){stabSum+=stabArr[fi];stabCnt++;}
+  }
+  if(curMidi>=0)runs.push({midi:curMidi,s:curStart,e:visFrames,stab:stabCnt?stabSum/stabCnt:0.5});
+
+  // find stab range for color normalization
+  var stabMin=1,stabMax=0;
+  for(var r=0;r<runs.length;r++){
+    if(runs[r].stab<stabMin)stabMin=runs[r].stab;
+    if(runs[r].stab>stabMax)stabMax=runs[r].stab;
+  }
+  var stabRange=stabMax-stabMin||1;
+
+  // draw bars
+  for(var r=0;r<runs.length;r++){
+    var run=runs[r];
+    var freq=440*Math.pow(2,(run.midi-69)/12);
+    var y=freqToY(freq);
+    var x=run.s/visFrames*c.width;
+    var w=Math.max(barW,(run.e-run.s)/visFrames*c.width);
+    // normalize stab to 0..1 within actual range, then log scale
+    var stabNorm=(run.stab-stabMin)/stabRange;
+    var logStab=Math.log(stabNorm*9+1)/Math.log(10);
+    // white=stable → yellow=medium → orange=ornamental
+    var r2=255;
+    var g2=Math.round(logStab*200);
+    var b2=Math.round(logStab>0.85?(logStab-0.85)/0.15*255:0);
+    ctx.fillStyle='rgba('+r2+','+g2+','+b2+',0.9)';
+    ctx.fillRect(x,y-barH/2,w-0.5,barH);
+  }
+
+  markReady('pitch-canvas');
+  drawTimeAxis(ctx,c.width,c.height,dur);
+}
+
+function detectChord(chroma){
+  // 24 templates: 12 major + 12 minor
+  // Major template: root=1, major3rd=0.5, perfect5th=0.8
+  // Minor template: root=1, minor3rd=0.5, perfect5th=0.8
+  var notes=['C','C#','D','D#','E','F','F#','G','G#','A','A#','B'];
+  var best=-1,bestChord='';
+  for(var root=0;root<12;root++){
+    // major: intervals 0,4,7
+    var maj=chroma[root]*1.0+chroma[(root+4)%12]*0.8+chroma[(root+7)%12]*0.9;
+    if(maj>best){best=maj;bestChord=notes[root];}
+    // minor: intervals 0,3,7
+    var min=chroma[root]*1.0+chroma[(root+3)%12]*0.8+chroma[(root+7)%12]*0.9;
+    if(min>best){best=min;bestChord=notes[root]+'m';}
+  }
+  return bestChord;
+}
+
+function drawChromaHeatmap(chromaFlat,dur){
+  var numFrames=chromaFlat.length/12;
+  var c=document.getElementById('chroma-canvas');c.width=c.offsetWidth||820;c.height=160;
+  var ctx=c.getContext('2d');ctx.fillStyle='#0a0a0a';ctx.fillRect(0,0,c.width,c.height);
+  var notes=['C','C#','D','D#','E','F','F#','G','G#','A','A#','B'];
+  var vs=viewStart,ve=viewEnd;
+  var f0=Math.floor(vs*numFrames),f1=Math.ceil(ve*numFrames);
+  var visFrames=Math.max(1,f1-f0);
+  var rowH=c.height/12;
+  var maxLineW=rowH*0.85; // max line width — leaves small gap to adjacent rows
+
+  // global P95 normalization
+  var allVals=[];
+  for(var fi=f0;fi<f1&&fi<numFrames;fi++)
+    for(var n=0;n<12;n++)allVals.push(chromaFlat[fi*12+n]);
+  allVals.sort(function(a,b){return a-b;});
+  var globalP95=allVals[Math.floor(allVals.length*0.95)]||1;
+
+  // per-pixel-column average per note
+  var colData=new Float32Array(c.width*12);
+  for(var col=0;col<c.width;col++){
+    var fi0=f0+Math.floor(col/c.width*visFrames);
+    var fi1=f0+Math.min(Math.ceil((col+1)/c.width*visFrames),visFrames);
+    for(var n=0;n<12;n++){
+      var sum=0,cnt=0;
+      for(var fi=fi0;fi<fi1&&fi<numFrames;fi++){sum+=chromaFlat[fi*12+n];cnt++;}
+      var v=cnt>0?sum/cnt:0;
+      v=Math.min(1,v/globalP95);
+      colData[col*12+n]=Math.pow(v,0.5);
+    }
+  }
+
+  // draw one horizontal line per note — width varies with intensity
+  for(var note=0;note<12;note++){
+    var cy=c.height-(note+0.5)*rowH; // center Y of this note's row
+    for(var col=0;col<c.width;col++){
+      var v=colData[col*12+note];
+      if(v<0.02)continue;
+      var hw=v*maxLineW*0.5; // half-width
+      var bv=Math.round(v*255);
+      ctx.fillStyle='rgb(255,255,255)';
+      ctx.fillRect(col,Math.round(cy-hw),1,Math.max(1,Math.round(hw*2)));
+    }
+  }
+
+  // note labels left
+  ctx.font='9px system-ui';
+  for(var note=0;note<12;note++){
+    var cy=c.height-(note+0.5)*rowH;
+    ctx.fillStyle='rgba(255,255,255,0.4)';
+    ctx.fillText(notes[note],3,cy+3);
+    // subtle separator line
+    ctx.fillStyle='rgba(255,255,255,0.04)';
+    ctx.fillRect(0,Math.round(c.height-note*rowH),c.width,1);
+  }
+
+  markReady('chroma-canvas');
+  drawTimeAxis(ctx,c.width,c.height,dur);
+}
+
+function drawSpectrogramFromFrames(frames,numFrames,fftSize,sr,dur,numFramesFull){
+  var bins=fftSize/2;
+  var c=document.getElementById('spectro-canvas');c.width=c.offsetWidth||820;c.height=360;
+  var ctx=c.getContext('2d');
+  var logMin=Math.log10(20),logMax=Math.log10(sr/2);
+  var vs=viewStart,ve=viewEnd;
+  var f0=Math.floor(vs*numFrames),f1=Math.ceil(ve*numFrames);
+  var visFrames=Math.max(1,f1-f0);
+  var W=c.width,H=c.height;
+  var imgData=ctx.createImageData(W,H),data=imgData.data;
+
+  // per-frequency percentile scaling — compute once over ALL frames, cache
+  if(!window._spectroPerc||window._spectroPerc.bins!==bins||window._spectroPerc.numFrames!==numFrames){
+    var p5arr=new Float32Array(bins),p90arr=new Float32Array(bins),p95arr=new Float32Array(bins);
+    for(var k=0;k<bins;k++){
+      var vals=new Float32Array(numFrames);
+      for(var fi2=0;fi2<numFrames;fi2++) vals[fi2]=frames[fi2*bins+k]/255;
+      var sorted=vals.slice().sort();
+      p5arr[k]=sorted[Math.floor(numFrames*0.05)];
+      p90arr[k]=sorted[Math.floor(numFrames*0.90)];
+      p95arr[k]=sorted[Math.floor(numFrames*0.95)];
+    }
+    window._spectroPerc={p5:p5arr,p90:p90arr,p95:p95arr,bins:bins,numFrames:numFrames};
+  }
+  var p5arr=window._spectroPerc.p5,p90arr=window._spectroPerc.p90,p95arr=window._spectroPerc.p95;
+
+  for(var col=0;col<W;col++){
+    var fi=Math.floor(col/W*visFrames);if(fi>=visFrames)fi=visFrames-1;
+    for(var row=0;row<H;row++){
+      var normY=(H-1-row)/(H-1);
+      var freq=Math.pow(10,logMin+(logMax-logMin)*normY);
+      var k=Math.min(Math.round(freq/sr*fftSize),bins-1);
+      var v=frames[Math.min(f0+fi,numFrames-1)*bins+k]/255;
+      var p5=p5arr[k],p90=p90arr[k],p95=p95arr[k];
+      var norm;
+      if(v<=p5)norm=0;
+      else if(v<=p90)norm=(v-p5)/((p90-p5)||0.001)*0.50;
+      else if(v<=p95)norm=0.50+(v-p90)/((p95-p90)||0.001)*0.50;
+      else norm=1.0;
+      var r,g,b;
+      if(norm<=0.50){var bv=Math.round(norm/0.50*128);r=bv;g=bv;b=bv;}
+      else{var t=(norm-0.50)/0.50;r=Math.round(128+t*127);g=Math.round(128*(1-t*0.65));b=Math.round(128*(1-t));}
+      var idx=(row*W+col)*4;
+      data[idx]=r;data[idx+1]=g;data[idx+2]=b;data[idx+3]=255;
+    }
+  }
+  ctx.putImageData(imgData,0,0);
+
+  ctx.font='10px system-ui';
+  [100,500,1000,2000,5000,10000].forEach(function(f){
+    if(f>sr/2)return;
+    var normY=(Math.log10(f)-logMin)/(logMax-logMin),y=Math.round((1-normY)*H);
+    ctx.fillStyle='rgba(255,255,255,0.08)';ctx.fillRect(0,y,W,1);
+    ctx.fillStyle='rgba(255,255,255,0.5)';ctx.fillText(f>=1000?(f/1000)+'k':f+'Hz',W-28,y-2);
+  });
+  var noteLines2=[
+    {midi:43,label:'G2',helper:false},{midi:47,label:'B2',helper:false},
+    {midi:50,label:'D3',helper:false},{midi:53,label:'F3',helper:false},{midi:57,label:'A3',helper:false},
+    {midi:60,label:'C4',helper:true},
+    {midi:64,label:'E4',helper:false},{midi:67,label:'G4',helper:false},
+    {midi:71,label:'B4',helper:false},{midi:74,label:'D5',helper:false},{midi:77,label:'F5',helper:false}
+  ];
+  noteLines2.forEach(function(nl){
+    var freq=440*Math.pow(2,(nl.midi-69)/12);
+    if(freq<20||freq>sr/2)return;
+    var normY=(Math.log10(freq)-logMin)/(logMax-logMin);
+    var y=Math.round((1-normY)*H);if(y<0||y>H)return;
+    var alpha=nl.helper?0.25:0.5;
+    ctx.strokeStyle='rgba(255,255,255,'+alpha+')';ctx.lineWidth=nl.helper?0.5:1;
+    ctx.beginPath();ctx.moveTo(30,y);ctx.lineTo(W,y);ctx.stroke();
+    ctx.fillStyle='rgba(0,0,0,0.65)';ctx.fillRect(0,y-9,28,11);
+    ctx.fillStyle='rgba(255,255,255,'+(nl.helper?0.5:0.9)+')';
+    ctx.font=(nl.helper?'9':'bold 10')+'px system-ui';ctx.fillText(nl.label,2,y);
+  });
+  markReady('spectro-canvas');
+        renderInstruments();;
+  drawTimeAxis(ctx,W,H,dur);
+}
+
+function drawStereoSpectro(stereoFrames,monoFrames,numFrames,fftSize,sr,dur){
+  var bins=fftSize/2;
+  var c=document.getElementById('stereospectro-canvas');
+  if(!c)return;
+  c.width=c.offsetWidth||820;c.height=360;
+  var ctx=c.getContext('2d');
+  var logMin=Math.log10(20),logMax=Math.log10(sr/2);
+  var vs=viewStart,ve=viewEnd;
+  var f0=Math.floor(vs*numFrames),f1=Math.ceil(ve*numFrames);
+  var visFrames=Math.max(1,f1-f0);
+  var W=c.width,H=c.height;
+
+  // contrast stretch — compute once over ALL frames, cache
+  if(!window._stereoP95||window._stereoP95.numFrames!==numFrames){
+    var allVals=[];
+    for(var fi=0;fi<numFrames;fi++)
+      for(var k=0;k<bins;k++) allVals.push(Math.abs(stereoFrames[fi*bins+k]));
+    allVals.sort(function(a,b){return a-b;});
+    window._stereoP95={val:allVals[Math.floor(allVals.length*0.95)]||1,numFrames:numFrames};
+  }
+  var scale=window._stereoP95.val>0?127/window._stereoP95.val:1;
+
+  var imgData=ctx.createImageData(W,H),data=imgData.data;
+  for(var col=0;col<W;col++){
+    var fi=Math.min(f0+Math.floor(col/W*visFrames),numFrames-1);
+    for(var row=0;row<H;row++){
+      var normY=(H-1-row)/(H-1);
+      var freq=Math.pow(10,logMin+(logMax-logMin)*normY);
+      var k=Math.min(Math.round(freq/sr*fftSize),bins-1);
+      var lr=(stereoFrames[fi*bins+k]*scale)/127;
+      var amp=monoFrames[fi*bins+k]/255;
+      var brightness=Math.pow(Math.max(0,amp),0.4);
+      var idx=(row*W+col)*4;
+      var r,g,b;
+      if(lr>0){var t=Math.min(1,lr*1.5);r=Math.round(t*255*brightness);g=Math.round(t*140*brightness);b=0;}
+      else{var t=Math.min(1,-lr*1.5);r=0;g=Math.round(t*80*brightness);b=Math.round(t*255*brightness);}
+      data[idx]=r;data[idx+1]=g;data[idx+2]=b;data[idx+3]=255;
+    }
+  }
+  ctx.putImageData(imgData,0,0);
+
+  ctx.font='10px system-ui';
+  [100,500,1000,2000,5000,10000].forEach(function(f){
+    if(f>sr/2)return;
+    var normY=(Math.log10(f)-logMin)/(logMax-logMin),y=Math.round((1-normY)*H);
+    ctx.fillStyle='rgba(255,255,255,0.08)';ctx.fillRect(0,y,W,1);
+    ctx.fillStyle='rgba(255,255,255,0.5)';ctx.fillText(f>=1000?(f/1000)+'k':f+'Hz',W-28,y-2);
+  });
+  var noteLines=[
+    {midi:43,label:'G2',helper:false},{midi:47,label:'B2',helper:false},
+    {midi:50,label:'D3',helper:false},{midi:53,label:'F3',helper:false},{midi:57,label:'A3',helper:false},
+    {midi:60,label:'C4',helper:true},
+    {midi:64,label:'E4',helper:false},{midi:67,label:'G4',helper:false},
+    {midi:71,label:'B4',helper:false},{midi:74,label:'D5',helper:false},{midi:77,label:'F5',helper:false}
+  ];
+  noteLines.forEach(function(nl){
+    var freq=440*Math.pow(2,(nl.midi-69)/12);
+    if(freq<20||freq>sr/2)return;
+    var normY=(Math.log10(freq)-logMin)/(logMax-logMin);
+    var y=Math.round((1-normY)*H);if(y<0||y>H)return;
+    var alpha=nl.helper?0.25:0.5;
+    ctx.strokeStyle='rgba(255,255,255,'+alpha+')';ctx.lineWidth=nl.helper?0.5:1;
+    ctx.beginPath();ctx.moveTo(30,y);ctx.lineTo(W,y);ctx.stroke();
+    ctx.fillStyle='rgba(0,0,0,0.65)';ctx.fillRect(0,y-9,28,11);
+    ctx.fillStyle='rgba(255,255,255,'+(nl.helper?0.5:0.9)+')';
+    ctx.font=(nl.helper?'9':'bold 10')+'px system-ui';ctx.fillText(nl.label,2,y);
+  });
+  markReady('stereospectro-canvas');
+  drawTimeAxis(ctx,W,H,dur);
+}
+
+function drawStructure(segments,dur){
+  var bar=document.getElementById('struct-wrap');
+  bar.innerHTML='';
+  segments.forEach(function(seg){
+    var pct=(seg.end-seg.start)/dur*100;
+    var div=document.createElement('div');
+    div.style.cssText='width:'+pct.toFixed(2)+'%;background:'+seg.color+';flex-shrink:0;cursor:default';
+    div.title=fmt(seg.start)+'–'+fmt(seg.end);
+    bar.appendChild(div);
+  });
+}
+
+function drawSpectrum(buf,id){
+  var c=document.getElementById(id);c.width=c.offsetWidth||820;c.height=120;
+  var ctx=c.getContext('2d');ctx.fillStyle='#0a0a0a';ctx.fillRect(0,0,c.width,c.height);
+  var sr=buf.sampleRate;
+  if(!audioCtx)audioCtx=new(window.AudioContext||window.webkitAudioContext)();
+  if(window._animFrame){cancelAnimationFrame(window._animFrame);}
+  if(window._mediaSource){try{window._mediaSource.disconnect();}catch(e){}}
+  if(window._analyser){try{window._analyser.disconnect();}catch(e){}}
+  var an=audioCtx.createAnalyser();an.fftSize=4096;an.smoothingTimeConstant=0.8;
+  window._analyser=an;
+  try{if(!window._mediaSource){window._mediaSource=audioCtx.createMediaElementSource(player);}window._mediaSource.connect(an);an.connect(audioCtx.destination);}catch(e){}
+  var binCount=an.frequencyBinCount,logMin=Math.log10(20),logMax=Math.log10(sr/2);
+  function draw(){
+    window._animFrame=requestAnimationFrame(draw);
+    var fd=new Uint8Array(binCount);an.getByteFrequencyData(fd);
+    ctx.fillStyle='#0a0a0a';ctx.fillRect(0,0,c.width,c.height);
+    for(var x=0;x<c.width;x++){
+      var freq=Math.pow(10,logMin+(logMax-logMin)*x/c.width);
+      var bin=Math.min(Math.round(freq/(sr/2)*binCount),binCount-1);
+      var h=fd[bin]/255*c.height*0.95;
+      ctx.fillStyle='hsl('+Math.round(200+x/c.width*80)+',65%,50%)';
+      ctx.fillRect(x,c.height-h,1,h);
+    }
+    ctx.font='10px system-ui';
+    [50,100,200,500,1000,2000,5000,10000,20000].forEach(function(f){
+      if(f>sr/2)return;
+      var x=(Math.log10(f)-logMin)/(logMax-logMin)*c.width;
+      ctx.fillStyle='rgba(255,255,255,0.05)';ctx.fillRect(Math.round(x),0,1,c.height);
+      ctx.fillStyle='#555';ctx.fillText(f>=1000?(f/1000)+'k':f+'',Math.round(x)+2,c.height-3);
+    });
+  }
+  draw();
+}
+// ---- GAUGE SYSTEM ----
+// min/max = absolute range
+// nLo/nHi = normal range (gray)
+// p5/p95 = extreme percentiles (saturated color)
+// loLabels/hiLabels = [slightly outside, clearly outside, extreme]
+var gauges={
+  'bpm':{
+    min:40,max:220,nLo:75,nHi:145,p5:55,p95:175,
+    loLabels:['eher langsam','sehr langsam','extrem langsam'],
+    hiLabels:['eher schnell','sehr schnell','extrem schnell'],
+    unit:'BPM'
+  },
+  'loud':{
+    min:-28,max:-4,nLo:-18,nHi:-10,p5:-26,p95:-6,
+    loLabels:['eher leise','sehr leise','extrem leise / dynamisch'],
+    hiLabels:['eher laut','sehr laut','extrem laut / komprimiert'],
+    unit:'dB'
+  },
+  'dyn':{
+    min:2,max:25,nLo:6,nHi:16,p5:3,p95:22,
+    loLabels:['leicht komprimiert','stark komprimiert','totgepresst'],
+    hiLabels:['leicht dynamisch','sehr dynamisch','extrem dynamisch'],
+    unit:'dB'
+  },
+  'centroid':{
+    min:300,max:8000,nLo:1000,nHi:4500,p5:400,p95:7000,
+    loLabels:['eher warm','sehr warm / dunkel','extrem dunkel / dumpf'],
+    hiLabels:['eher hell','sehr hell / scharf','extrem schrill'],
+    unit:'Hz'
+  },
+  'rolloff':{
+    min:1000,max:20000,nLo:4000,nHi:14000,p5:1500,p95:18000,
+    loLabels:['eher geschlossen','sehr geschlossen','extrem bassig / stumpf'],
+    hiLabels:['eher offen / luftig','sehr offen','extrem hell / überpräsent'],
+    unit:'Hz'
+  },
+  'stereo':{
+    min:0,max:100,nLo:15,nHi:70,p5:3,p95:90,
+    loLabels:['leicht mono-nah','fast mono','komplett mono'],
+    hiLabels:['eher breit','sehr breit','extrem breit / phasig'],
+    unit:'%'
+  },
+  'chord-rate':{
+    min:0,max:2,nLo:0.1,nHi:0.8,p5:0.02,p95:1.5,
+    loLabels:['harmonisch statisch','sehr statisch / Drone','kein Akkordwechsel'],
+    hiLabels:['harmonisch aktiv','sehr aktiv','extrem schnelle Harmonik'],
+    unit:'/s'
+  },
+  'entropy':{
+    min:0,max:100,nLo:30,nHi:75,p5:10,p95:90,
+    loLabels:['eher tonal / klar','sehr tonal / wenig Obertöne','fast reiner Sinuston'],
+    hiLabels:['eher dicht / noisig','sehr dicht / Wall of Sound','weißes Rauschen'],
+    unit:'%'
+  },
+  'texture':{
+    min:0,max:100,nLo:20,nHi:70,p5:5,p95:88,
+    loLabels:['eher klar / strukturiert','sehr klar / minimalistisch','extrem simpel'],
+    hiLabels:['eher dicht / komplex','sehr komplex / chaotisch','extrem dicht'],
+    unit:'%'
+  },
+  'inharm':{
+    min:0,max:100,nLo:5,nHi:40,p5:1,p95:70,
+    loLabels:['sehr rein / harmonisch','extrem rein / synthetisch','perfekte Sinuswellen'],
+    hiLabels:['eher unrein / verstimmt','stark verstimmt / FM-artig','extrem inharmonisch'],
+    unit:''
+  },
+  'attack':{
+    min:0,max:500,nLo:20,nHi:200,p5:5,p95:400,
+    loLabels:['eher perkussiv','sehr perkussiv','extrem hart / klick-artig'],
+    hiLabels:['eher weich','sehr weich / pad-artig','extrem langsamer Fade-in'],
+    unit:'ms'
+  },
+  'note-stab':{
+    min:0,max:100,nLo:30,nHi:80,p5:10,p95:95,
+    loLabels:['eher unruhig / ornamental','sehr unruhig / viele Glissandi','extrem flatternd'],
+    hiLabels:['eher stabil / gehalten','sehr stabil / lange Noten','extrem statisch / Drone'],
+    unit:'%'
+  },
+  'tilt':{
+    min:-100,max:100,nLo:-30,nHi:30,p5:-70,p95:70,
+    loLabels:['eher hell / luftig','sehr hell / treblelastig','extrem schrill / basstarm'],
+    hiLabels:['eher warm / bassig','sehr bassig','extrem bass-dominant / dumpf'],
+    unit:''
+  },
+  'harmdense':{
+    min:0,max:16,nLo:2,nHi:10,p5:0,p95:14,
+    loLabels:['wenig Obertöne / sinusartig','kaum harmonisch','reiner Sinus'],
+    hiLabels:['reichhaltige Obertöne','sehr reich / Orgel-artig','extrem dicht / Orgel/Synthesizer'],
+    unit:''
+  }
+};
+
+function gaugeGradient(g){
+  var lo=(g.nLo-g.min)/(g.max-g.min);
+  var hi=(g.nHi-g.min)/(g.max-g.min);
+  var p5=(g.p5-g.min)/(g.max-g.min);
+  var p95=(g.p95-g.min)/(g.max-g.min);
+  // saturated blue at p5, fade to gray at nLo, gray through normal, fade to orange at nHi, saturated orange at p95
+  return 'linear-gradient(to right,'+
+    '#1a4fa0 0%,'+
+    '#1a4fa0 '+(p5*100).toFixed(1)+'%,'+
+    '#3a6ab8 '+(lo*100).toFixed(1)+'%,'+
+    '#3a3a3a '+(lo*100+0.5).toFixed(1)+'%,'+
+    '#3a3a3a '+(hi*100-0.5).toFixed(1)+'%,'+
+    '#c06010 '+(hi*100).toFixed(1)+'%,'+
+    '#e05000 '+(p95*100).toFixed(1)+'%,'+
+    '#e05000 100%)';
+}
+
+function getGaugeLabel(g,value){
+  var lo=g.nLo,hi=g.nHi,p5=g.p5,p95=g.p95;
+  if(value>=lo&&value<=hi)return {text:'im Normalbereich',color:'#888'};
+  if(value<lo){
+    var depth=value<p5?2:value<(lo+p5)/2?1:0;
+    return {text:g.loLabels[depth],color:depth===2?'#1a4fa0':depth===1?'#3a6ab8':'#6090c8'};
+  }else{
+    var depth=value>p95?2:value>(hi+p95)/2?1:0;
+    return {text:g.hiLabels[depth],color:depth===2?'#e05000':depth===1?'#c06010':'#d08030'};
+  }
+}
+
+function updateGauge(id,value){
+  var g=gauges[id];if(!g)return;
+  var track=document.querySelector('#g-'+id+' .gauge-track');
+  var marker=document.getElementById('gm-'+id);
+  if(!track||!marker)return;
+  track.style.background=gaugeGradient(g);
+  var pct=Math.max(0,Math.min(1,(value-g.min)/(g.max-g.min)));
+  marker.style.left=(pct*100).toFixed(1)+'%';
+  gauges[id]._lastVal=value;
+}
+
+function gaugeZoneText(id){
+  var g=gauges[id];if(!g||g._lastVal===undefined)return '';
+  var label=getGaugeLabel(g,g._lastVal);
+  return '<br><span style="font-size:11px;color:'+label.color+'">'+label.text+'</span>'+
+    '<br><span style="font-size:10px;color:#555">'+
+    '<span style="color:#3a6ab8">◀</span> blau = '+g.loLabels[0]+' &nbsp;'+
+    '<span style="color:#888">▬</span> grau = normal &nbsp;'+
+    '<span style="color:#c06010">▶</span> orange = '+g.hiLabels[0]+'</span>';
+}
+var tt=document.getElementById('tt');
+var ttData={}; // stores arrays per chart id for hover lookup
+
+function showTT(html,x,y){
+  tt.innerHTML=html;
+  tt.style.opacity='1';
+  var vw=window.innerWidth,tw=tt.offsetWidth||200;
+  tt.style.left=Math.min(x+14,vw-tw-10)+'px';
+  tt.style.top=(y+14)+'px';
+}
+function hideTT(){tt.style.opacity='0';}
+
+// card tooltips
+var cardTips={
+  'v-plays':'Anzahl der Wiedergaben insgesamt auf Suno.',
+  'v-likes':'Anzahl der Likes (Upvotes).',
+  'v-comments':'Anzahl der Kommentare.',
+  'v-ratio':'Plays pro Like — niedriger Wert = hohe Engagement-Rate.',
+  'v-age':'Alter des Songs seit Veröffentlichung.',
+  'v-ppd':'Durchschnittliche Plays pro Tag seit Veröffentlichung.',
+  'v-model':'Suno-Modellversion mit der der Song generiert wurde.',
+  'v-bpm':'Globales Tempo — Median der IOI-Werte (Inter-Onset-Intervall). Robustester der drei Algorithmen. Normalbereich 75–145 BPM.',
+  'v-dur':'Gesamtdauer des Songs.',
+  'v-loud':'RMS-Lautheit in dB. Streaming-Standard ca. -14 dB. Normalbereich -18 bis -10 dB.',
+  'v-dyn':'Dynamikumfang: Peak-dB minus RMS-dB. Normalbereich 6–16 dB.',
+  'v-centroid':'Spektraler Schwerpunkt aller Frames gemittelt. Normalbereich 1000–4500 Hz.',
+  'v-rolloff':'Frequenz unterhalb derer 85% der Spektralenergie liegt, gemittelt. Normalbereich 4–14 kHz.',
+  'v-key':'Tonart via Krumhansl-Schmuckler über akkumulierte Chroma-Frames. Wird nach jeder FFT-Runde verfeinert.',
+  'v-stereo':'Stereobreite als L–R-Differenz. Normalbereich 15–70%.',
+  'v-mode':'Kirchentonart via Intervall-Template-Matching auf Chroma-Summe. Ionisch = normales Dur, Äolisch = normales Moll.',
+  'v-chord-rate':'Akkordwechsel pro Sekunde aus Chroma-Frames. Niedrig = harmonisch statisch / Drone. Hoch = schnelle Progressionen.',
+  'v-entropy':'Spektrale Entropie: wie gleichmäßig ist Energie über alle Frequenzen verteilt. Niedrig = tonal/klar, hoch = noisig/dicht.',
+  'v-texture':'Textur-Index: kombiniert Entropie (40%) + Inharmonizität (40%) + Akkordrate (20%). 0% = klar/minimal, 100% = dicht/chaotisch.',
+  'v-inharm':'Inharmonizität: Abweichung der Obertöne von ganzzahligen Vielfachen der Grundfrequenz. Niedrig = rein/synthetisch, hoch = FM-artig/verstimmt.',
+  'v-attack':'Erster 10%→90% Energie-Anstieg im Song. Kurz = perkussiv/aggressiv, lang = weich/Pad-artig.',
+  'v-symmetry':'Energie-Form des Songs aus drittel-Segmenten der LUFS-Kurve. Crescendo ↑ / Decrescendo ↓ / Arch ∧ / Gleichmäßig ─.',
+  'v-tilt':'Spektral Tilt: Verhältnis Bass-Energie (20–500 Hz) zu Höhen-Energie (2–16 kHz). Positiv = bassig/warm, negativ = hell/luftig. Ergänzt Centroid durch direkten Bass/Treble-Quotienten.',
+  'v-harmdense':'Harmonische Dichte: Anzahl aktiver Partialtöne über Rauschgrenze (10% der Grundfrequenz-Energie). Sinuston = 1, Orgel = 8+, weißes Rauschen ≈ 0.',
+  'v-note-stab':'Noten-Stabilität: wie lange Pitch-Werte gehalten werden vor einem Halbtonsprung. Hoch = lange Noten, niedrig = viele Ornamente/Glissandi.'
+};
+var gaugeIds={'v-bpm':'bpm','v-loud':'loud','v-dyn':'dyn','v-centroid':'centroid','v-rolloff':'rolloff','v-stereo':'stereo','v-chord-rate':'chord-rate','v-entropy':'entropy','v-texture':'texture','v-inharm':'inharm','v-attack':'attack','v-note-stab':'note-stab','v-tilt':'tilt','v-harmdense':'harmdense'};
+
+Object.keys(cardTips).forEach(function(id){
+  var el=document.getElementById(id);
+  if(!el)return;
+  var card=el.closest('.card');
+  if(!card)return;
+  card.style.cursor='help';
+  card.addEventListener('mouseenter',function(e){
+    var gid=gaugeIds[id];
+    showTT(cardTips[id]+(gid?gaugeZoneText(gid):''),e.clientX,e.clientY);
+  });
+  card.addEventListener('mousemove',function(e){
+    var gid=gaugeIds[id];
+    showTT(cardTips[id]+(gid?gaugeZoneText(gid):''),e.clientX,e.clientY);
+  });
+  card.addEventListener('mouseleave',hideTT);
+});
+
+// chart tooltips: description + value at cursor position
+var chartTips={
+  'lufs-canvas':{
+    desc:'<b>Lautheit über Zeit — RMS (Effektivwert) in Dezibel</b><br>X: Zeit · Y: Dezibel (dB)<br>Hellgrüne Linie = wahrgenommene Lautstärke als RMS (Root Mean Square — quadratischer Mittelwert der Amplitude) in 400ms-Fenstern.<br><br>Linie oben = lauter Abschnitt. Kurze Einbrüche zwischen Sections = Zäsur zwischen Verse und Chorus. Langsamer Abfall = Fade-out. Plötzlicher Einbruch auf −60 dB = harter Schnitt oder Drop. Plateau = komprimierter Abschnitt. Streaming-Normalisierung zielt auf ca. −14 dB.',
+    valFn:function(pct){var d=ttData['lufs-canvas'];if(!d)return null;var i=Math.floor(pct*d.length);return d[Math.min(i,d.length-1)].toFixed(1)+' dB';}
+  },
+  'energy-canvas':{
+    desc:'<b>Signalenergie über Zeit</b><br>X: Zeit · Y: RMS-Energie (linear)<br>Graue Hintergrundlinie = zoom-geglättetes Rohsignal. Farbige Vordergrandlinie = Richtung des Energieverlaufs basierend auf gleitendem Median (ignoriert Percussion-Spitzen).<br><br><span style="color:#d07030">■ Orange</span> = Energie steigt (Aufbau, Crescendo, Spannungssteigerung vor Chorus).<br><span style="color:#3070b0">■ Blau</span> = Energie fällt (Ausklingen, Fade, Entspannung nach Peak).<br><span style="color:#888">■ Grau</span> = gleichbleibend.<br><br>Regelmäßige Spitzen = Rhythmus sichtbar. Bei Zoom-in: einzelne Trommelschläge als Impulse erkennbar.',
+    valFn:function(pct){var d=ttData['energy-canvas'];if(!d)return null;var i=Math.floor(pct*d.length);return (d[Math.min(i,d.length-1)]*1000).toFixed(2)+' (×10⁻³)';}
+  },
+  'crest-canvas':{
+    desc:'<b>Dynamikumfang (Crestfaktor)</b><br>X: Zeit · Y: Peak/RMS-Verhältnis<br>Zeigt den Abstand zwischen den lautesten Momenten und der durchschnittlichen Lautstärke. Leise Abschnitte werden ausgeblendet (Energie-Maske).<br><br>Hoch = scharfe Transienten, Drums klingen kraftvoll, Signal hat Punch und Lebendigkeit.<br>Niedrig und flach = Limiter hat alles angeglichen — klingt <b>matschig</b>, Drums verlieren ihren Anschlag.<br>Chorus oft niedriger als Verse = Chorus ist stärker komprimiert.<br>Ausreißer nach oben = Stille oder sehr leise Abschnitte.',
+    valFn:function(pct){var d=ttData['crest-canvas'];if(!d)return null;var i=Math.floor(pct*d.length);return d[Math.min(i,d.length-1)].toFixed(2);}
+  },
+  'onset-canvas':{
+    desc:'<b>Impulsdichte (Onsets/s) — wie viele Anschläge pro Sekunde</b><br>X: Zeit · Y: Impulse pro Sekunde<br>Ein Impuls (Transient/Onset) = ein kurzer Energieanstieg der einen neuen Klang einleitet — jeder Trommelschlag, Gitarrenanschlag oder Vokaleinsatz.<br><br>Hoch = rhythmisch dichte Abschnitte, 16tel-Muster, viele Ereignisse.<br>Niedrig = sparsam, viel Luft.<br>Null = Stille oder reine Pad-Flächen ohne Anschläge.<br>Bei 120 BPM und Kick+Snare: ca. 2–4 Impulse/s. Mehr = Hi-Hat oder dichte Percussion.',
+    valFn:function(pct){var d=ttData['onset-canvas'];if(!d)return null;var i=Math.floor(pct*d.length);return d[Math.min(i,d.length-1)].toFixed(1)+' /s';}
+  },
+  'bpmcurve-canvas':{
+    desc:'<b>Tempo über Zeit (BPM)</b><br>X: Zeit · Y: Schläge pro Minute<br>BPM ist die Schlagfrequenz der Percussion ausgedrückt als Schläge pro Minute. 120 BPM = 2 Schläge/s.<br><br><span style="color:#f5a050">■ Orange (dick)</span> = IOI Median — robustester Algorithmus, Median der Impuls-Abstände.<br><span style="color:#a03020">■ Rotbraun</span> = IOI Peak-Picking — misst direkt Zeit zwischen Impulsen.<br><span style="color:#aaa">■ Grau (dünn)</span> = Autokorrelation — periodische Muster in der Hüllkurve.<br><br>Lücken = zu leise für Messung. Alle drei übereinstimmend = Tempo sicher. Sprünge = Halbtakt-Ambiguität.',
+    valFn:function(pct){
+      var d=ttData['bpmcurve-canvas'];var ioi=window._bpmsIOI,med=window._bpmsMedian;
+      var lines=[];
+      if(med&&med.length){var i=Math.floor(pct*med.length);var v=med[Math.min(i,med.length-1)];if(!isNaN(v))lines.push('<span style="color:#f5a050">IOI Median: '+Math.round(v)+' BPM</span>');}
+      if(ioi&&ioi.length){var i=Math.floor(pct*ioi.length);var v=ioi[Math.min(i,ioi.length-1)];if(!isNaN(v))lines.push('<span style="color:#a03020">IOI Peaks: '+Math.round(v)+' BPM</span>');}
+      if(d&&d.length){var i=Math.floor(pct*d.length);var v=d[Math.min(i,d.length-1)];if(!isNaN(v))lines.push('<span style="color:#aaa">Autokorr: '+Math.round(v)+' BPM</span>');}
+      return lines.length?lines.join('<br>'):'keine Messung (zu leise)';
+    }
+  },
+  'vocal-canvas':{
+    desc:'<b>Stimmanalyse (Tarja-Methode)</b><br>X: 12 Analyse-Fenster über den Song · Y: gespiegelt<br><span style="color:#ff8c00">▲ Orange nach oben</span> = weiblicher Score pro Fenster.<br><span style="color:#5090e0">▼ Blau nach unten</span> = männlicher Score pro Fenster.<br>Hintergrund-Helligkeit = Formantaktivität (F1+F2 Energie) — hell = Gesang erkannt, dunkel = kein Gesang.<br><br>Score aus: Band-Energie-Verhältnis (80-165Hz vs 165-350Hz) + HPS-F0 + Spektralcentroid + F1/F2-Verhältnis. Fenster mit zu wenig Formantenergie werden ignoriert.',
+    valFn:null
+  },
+  'stereo-canvas':{
+    desc:'<b>Stereopanorama — L/R-Differenz pro Frequenzband</b><br>X: Zeit · 8 Zeilen = 8 Frequenzbänder (20Hz unten bis 20kHz oben)<br>Jede Zeile zeigt die vorzeichenerhaltende Log-Transformation der L−R-Differenz: sign(x)·log(|x|+1).<br><br><span style="color:#ff7800">■ Orange nach oben</span> = linker Kanal dominant · helle Kantenlinie = Balkenende<br><span style="color:#0088ff">■ Blau nach unten</span> = rechter Kanal dominant · helle Kantenlinie = Balkenende<br>Helligkeit = absolute Energie (log-skaliert) — dunkle Balken = leises Signal, helle Balken = lautes Signal.<br><br>Bass fast immer symmetrisch = gutes Mastering (Bass soll mono sein). Höhen aktiv = Reverb/Chorus gepannt. Durchgehend einfarbiges Band = Instrument hard-gepannt.',
+    valFn:null
+  },
+  'harm-canvas':{
+    desc:'<b>Klangtonalität (Harmonicity) + Klangkomplexität (Entropie)</b><br>X: Zeit · Y: gespiegelt um Nulllinie<br><span style="color:#d07030">▲ Orange nach oben</span> = Klang — harmonischer Anteil, tonal, melodisch.<br><span style="color:#3070b0">▼ Blau nach unten</span> = Krach — noisiger Anteil, Percussion, Rauschen.<br><span style="color:#b464dc">— Lila Linie</span> = Entropie — oben=geordnet/tonal, unten=chaotisch/dicht. Oben wenn Energie auf wenige Frequenzen konzentriert, unten wenn gleichmäßig verteilt.<br><br>Entropie und Harmonicity zeigen meist dasselbe — divergieren sie, ist das interessant: ein Instrument mit vielen inharmonischen aber stabilen Frequenzen hat niedrige Harmonicity aber mittlere Entropie.',
+    valFn:function(pct){
+      var dh=ttData['harm-canvas'],de=ttData['entropy-canvas'];
+      var i=Math.floor(pct*(dh?dh.length:0));
+      var parts=[];
+      if(dh)parts.push('Klang: '+(dh[Math.min(i,dh.length-1)]*100).toFixed(0)+'%');
+      if(de)parts.push('Entropie: '+(de[Math.min(i,de.length-1)]*100).toFixed(0)+'%');
+      return parts.join(' · ')||null;
+    }
+  },
+  'flux-canvas':{
+    desc:'<b>Klangveränderung (Spektrale Fluktuation) — 8-Band Heatmap</b><br>X: Zeit · 8 Zeilen = 8 Frequenzbänder (Bass unten, Höhen oben)<br>Helligkeit = wie stark sich dieses Frequenzband von Frame zu Frame verändert. Logarithmisch normiert per Band.<br><br>Heller Blitz im Bass-Band = Kick Drum. Heller Blitz in Höhen = Hi-Hat. Breiter Blitz über viele Bänder = Synthesizer-Attack. Alles dunkel = Pad/Drone ohne Änderung. Mitten flackern = Melodie mit schnellen Noten.',
+    valFn:null
+  },
+  'vocal-canvas':{
+    desc:'<b>Stimmfrequenzen — Tonhöhe erkannter Stimmen</b><br>X: Zeit · Y: Grundfrequenz (80–600Hz, logarithmisch)<br>Nur Frames mit Harmonicity &gt; 35% werden gezeigt — kein Gesang = keine Punkte.<br><br><span style="color:#5090e0">■ Blau</span> = männliche Stimmlage (F0 &lt; 165Hz).<br><span style="color:#ff8c00">■ Orange</span> = weibliche Stimmlage (F0 &gt; 185Hz).<br>Grau = Übergangsbereich.<br><br>Zweite Stimme (Duett) via Spectral Subtraction: erste Stimme wird aus dem Spektrum subtrahiert, dann erneut nach F0 gesucht. Helle Umrandung = zweite Stimme.<br><br>Lücken = Instrumental, Pause oder zu wenig harmonisches Signal.',
+    valFn:function(pct){
+      var d=ttData['pitch-canvas'];if(!d)return null;
+      var i=Math.floor(pct*d.length);var v=d[Math.min(i,d.length-1)];if(v<60)return null;
+      var note=['C','C#','D','D#','E','F','F#','G','G#','A','A#','B'];
+      var midi=Math.round(12*Math.log2(v/440)+69);
+      return Math.round(v)+' Hz ('+note[((midi%12)+12)%12]+Math.floor(midi/12-1)+')';
+    }
+  },
+  'pitch-canvas':{
+    desc:'<b>Tonhöhenverlauf + Noten-Stabilität (Piano-Roll)</b><br>X: Zeit · Y: Tonhöhe (MIDI, logarithmisch) · Notenlinien bei C-Tönen<br>Horizontale Balken = gehaltene Noten. Balkenlänge = Notendauer.<br><span style="color:#ffffff">■ Weiß</span> = längste/stabilste Noten im Song. <span style="color:#ffc800">■ Gelb</span> = mittellang. <span style="color:#ff8800">■ Orange</span> = kurz/ornamental.<br>Farben sind relativ zum Song normiert — Weiß ist immer die stabilste Note im jeweiligen Song.<br><br>Zoom-in: einzelne Noten als Balken sichtbar. Lücken = Stille oder Percussion ohne klaren Pitch.',
+    valFn:function(pct){
+      var d=ttData['pitch-canvas'];if(!d)return null;
+      var i=Math.floor(pct*d.length);var v=d[Math.min(i,d.length-1)];if(v<60)return null;
+      var note=['C','C#','D','D#','E','F','F#','G','G#','A','A#','B'];
+      var midi=Math.round(12*Math.log2(v/440)+69);
+      return Math.round(v)+' Hz ('+note[((midi%12)+12)%12]+Math.floor(midi/12-1)+')';
+    }
+  },
+  'tilt-canvas':{
+    desc:'<b>Frequenzgewicht (Spektral Tilt)</b><br>X: Zeit · Y: Bass/Treble-Verhältnis · fest skaliert ±1<br><span style="color:#3070b0">■ Blau nach oben</span> = luftig/hell (mehr Energie über 2 kHz) — Höhen, Luft, Brillanz.<br><span style="color:#d07030">■ Orange nach unten</span> = bassig/warm (mehr Energie unter 500 Hz) — Fundament, Wärme, Druck.<br><br>Oben = Luft und Brillanz dominieren. Unten = Bass und Wärme dominieren. Nulllinie = ausgeglichen. Wechsel beim Einsetzen von Kick/Bass gut sichtbar.',
+    valFn:function(pct){var d=ttData['tilt-canvas'];if(!d)return null;var i=Math.floor(pct*d.length);var v=d[Math.min(i,d.length-1)];return (v>0?'+':'')+v.toFixed(2)+(v>0.2?' bassig':v<-0.2?' hell':' ausgeglichen');}
+  },
+  'harmdense-canvas':{
+    desc:'<b>Obertonreichtum (Harmonische Dichte)</b><br>X: Zeit · Y: Anzahl aktiver Partialtöne (0–16)<br>Wie viele Obertöne über der Rauschgrenze (10% der Grundfrequenz-Energie) aktiv sind.<br><br>1 = fast reiner Sinuston. 4–6 = typische Instrumente. 8–12 = reiche Synthese (Orgel, Blechbläser). 0 = Stille oder Percussion. Für NDH/Industrial: hohe Dichte = schwere, satte Textur.',
+    valFn:function(pct){var d=ttData['harmdense-canvas'];if(!d)return null;var i=Math.floor(pct*d.length);return Math.round(d[Math.min(i,d.length-1)])+' Partialtöne';}
+  },
+  'inharm-canvas':{
+    desc:'<b>Klangrauheit (Inharmonizität)</b><br>X: Zeit · Y: 0–0.15 (fest skaliert, nicht dynamisch)<br>Mittlere relative Abweichung der Obertöne (h=2..8) von ganzzahligen Vielfachen der Grundfrequenz.<br><br>0.00–0.03 = rein harmonisch — Sinuswelle, saubere Synthesizer, Flöte.<br>0.03–0.07 = leicht inharmonisch — Klavier, Gitarre, typische Instrumente.<br>0.07–0.12 = stark inharmonisch — FM-Synthese, Glocken, Distortion.<br>&gt;0.12 = extrem — Metallobjekte, aggressive FM, sehr starke Verzerrung.<br><br>Rauschen wenn kein klares F0 gefunden — Percussion und Akkorde liefern keinen zuverlässigen Wert.',
+    valFn:function(pct){var d=ttData['inharm-canvas'];if(!d)return null;var i=Math.floor(pct*d.length);return d[Math.min(i,d.length-1)].toFixed(3);}
+  },
+
+  'chroma-canvas':{
+    desc:'<b>Kumulierte Tonverteilung (Chroma)</b><br>X: Zeit · Y: 12 Halbtöne (C unten bis B oben)<br>Linienbreite = Intensität des Tons. Alle Oktaven werden addiert (C2+C3+C4 → C). Globale P95-Normierung.<br><br>Dicke Linie = Ton dominant aktiv. Dünne Linie = Ton schwach präsent. Lücke = Ton inaktiv. Mehrere gleichzeitig dicke Linien = Akkord.',
+    valFn:null
+  },
+  'spectro-canvas':{
+    desc:'<b>Spektrogramm (Zeit × Frequenz)</b><br>X: Zeit · Y: Frequenz log. (20Hz–22kHz) mit Notenlinien<br>Schwarz = kein Signal. Weiß = bis P90 (90. Perzentil der lokalen Amplitude). <span style="color:#ff8800">Orange</span> = über P90 — die lautesten Anteile.<br><br>Horizontal helle Linien = gehaltene Töne. Vertikale Striche = Transienten/Drums. Orange Bereiche = dominante Frequenzen. Lokal Z-normiert pro Frequenzbin.',
+    valFn:function(pct,yPct,sr){
+      var logMin=Math.log10(20),logMax=Math.log10((sr||44100)/2);
+      var freq=Math.pow(10,logMin+(logMax-logMin)*(1-yPct));
+      return freq>=1000?(freq/1000).toFixed(1)+' kHz':Math.round(freq)+' Hz';
+    }
+  },
+  'stereospectro-canvas':{
+    desc:'<b>Stereo-Spektrogramm — Panning pro Frequenz</b><br>X: Zeit · Y: Frequenz · Farbe: Panning-Richtung<br><span style="color:#ff6600">■ Orange</span> = linker Kanal dominant. <span style="color:#0077ff">■ Blau</span> = rechter Kanal dominant. Grau = zentriert. Helligkeit = Amplitude.<br><br>Bass fast immer grau = gutes Mastering. Höhen oft orange/blau = Reverb gepannt. Komplett einfarbige Frequenz = hard-panned Instrument.',
+    valFn:function(pct,yPct,sr){
+      var logMin=Math.log10(20),logMax=Math.log10((sr||44100)/2);
+      var freq=Math.pow(10,logMin+(logMax-logMin)*(1-yPct));
+      return freq>=1000?(freq/1000).toFixed(1)+' kHz':Math.round(freq)+' Hz';
+    }
+  },
+  'freq-canvas':{
+    desc:'<b>Frequenzspektrum — live</b><br>X: Frequenz (logarithmisch, 20Hz–20kHz) · Y: Amplitude · 60fps<br>Zeigt den momentanen Frequenzinhalt während der Wiedergabe. Bass links, Mitten Mitte, Höhen rechts.<br><br>Peaks = dominante Frequenzen. Gleichmäßige Füllung = dichte Textur. Für Echtzeit-Monitoring.',
+    valFn:function(pct,yPct,sr){
+      var logMin=Math.log10(20),logMax=Math.log10((sr||44100)/2);
+      var freq=Math.pow(10,logMin+(logMax-logMin)*pct);
+      return freq>=1000?(freq/1000).toFixed(1)+' kHz':Math.round(freq)+' Hz';
+    }
+  }
+};
+var currentSR=44100;
+Object.keys(chartTips).forEach(function(id){
+  var c=document.getElementById(id);
+  if(!c)return;
+  var tip=chartTips[id];
+  c.style.cursor='crosshair';
+  c.addEventListener('mousemove',function(e){
+    var rect=c.getBoundingClientRect();
+    var pct=(e.clientX-rect.left)/rect.width;
+    var yPct=(e.clientY-rect.top)/rect.height;
+    var t=fmt(pct*songDuration);
+    var html='<span style="color:#888;font-size:11px">'+t+'</span><br>'+tip.desc;
+    if(tip.valFn){
+      var val=tip.valFn(pct,yPct,currentSR);
+      if(val)html='<span style="color:#888;font-size:11px">'+t+'</span> <span style="color:#7ab8f5;font-weight:500">'+val+'</span><br>'+tip.desc;
+    }
+    showTT(html,e.clientX,e.clientY);
+  });
+  c.addEventListener('mouseleave',hideTT);
+});
+
+// struct bar tooltip
+var sw=document.getElementById('struct-wrap');
+if(sw){
+  sw.style.cursor='crosshair';
+  sw.addEventListener('mousemove',function(e){
+    var rect=sw.getBoundingClientRect();
+    var pct=(e.clientX-rect.left)/rect.width;
+    var t=fmt(pct*songDuration);
+    showTT('<span style="color:#888;font-size:11px">'+t+'</span><br>Song-Struktur: Farbblöcke markieren spektrale Segmentgrenzen (Novelty-Funktion). Keine automatische Beschriftung — Interpretation liegt beim Hörer.',e.clientX,e.clientY);
+  });
+  sw.addEventListener('mouseleave',hideTT);
+}
+
+// store data arrays for chart value lookups
+function storeChartData(id,arr){ttData[id]=Array.from(arr);}
+
+// Unified Y-axis labels — innen links, einheitliches Styling
+// values: array of {v, label} where v is the data value, label is display string
+function drawYAxis(ctx,h,values,fixedMin,fixedMax){
+  ctx.font='8px system-ui';
+  values.forEach(function(item){
+    var y=h-(item.v-fixedMin)/(fixedMax-fixedMin)*h*0.88-4;
+    if(y<4||y>h-2)return;
+    ctx.fillStyle='rgba(255,255,255,0.06)';
+    ctx.fillRect(0,Math.round(y),ctx.canvas?ctx.canvas.width:820,1);
+    ctx.fillStyle='rgba(255,255,255,0.35)';
+    ctx.fillText(item.label,3,Math.round(y)-2);
+  });
+}
+
+// mark canvas as done — removes skeleton pulse
+function markReady(id){
+  var c=document.getElementById(id);
+  if(c){c.classList.remove('chart-pending');c.classList.add('chart-ready');}
+}
+</script>
+</body>
+</html>
