@@ -27,7 +27,7 @@ canvas{width:100%;border-radius:4px;display:block}
 #status{font-size:12px;color:#666;margin:4px 0}
 #progress-wrap{height:3px;background:#222;border-radius:2px;margin:6px 0;overflow:hidden}
 #progress-bar{height:100%;width:0%;background:#7ab8f5;transition:width 0.3s}
-#artwork{width:25%;max-width:200px;min-width:80px;aspect-ratio:1;border-radius:10px;object-fit:cover;display:none;flex-shrink:0}
+#artwork{width:25%;max-width:200px;min-width:80px;border-radius:10px;object-fit:cover;display:none;flex-shrink:0;height:auto}
 #meta{margin-bottom:10px;overflow:hidden}
 #meta h2{font-size:15px;font-weight:500;margin-bottom:3px}
 #meta-sub{font-size:12px;color:#666;margin-bottom:4px}
@@ -47,7 +47,7 @@ audio{width:100%;border-radius:8px;margin:8px 0;accent-color:#7ab8f5}
 <script src="https://cdn.jsdelivr.net/npm/onnxruntime-web@1.18.0/dist/ort.min.js"></script>
 </head>
 <body>
-<h1>Suno Audio Analyzer <span style="font-size:10px;color:#444;font-weight:400">v3.8 · Essentia+Demucs</span></h1>
+<h1>Suno Audio Analyzer <span style="font-size:10px;color:#444;font-weight:400">v3.9 · Essentia+Demucs</span></h1>
 <div id="tt"></div>
 
 <div class="section">
@@ -75,7 +75,10 @@ audio{width:100%;border-radius:8px;margin:8px 0;accent-color:#7ab8f5}
 
 <div id="meta" style="display:none;margin-bottom:10px">
   <div style="display:flex;gap:14px;align-items:flex-start">
-    <img id="artwork" src="" alt="">
+    <div style="display:flex;flex-direction:column;gap:4px;flex-shrink:0;width:25%;max-width:200px;min-width:80px">
+      <img id="artwork" src="" alt="" style="width:100%;height:auto;border-radius:10px;object-fit:cover;display:none">
+      <canvas id="density-canvas" style="width:100%;aspect-ratio:1;border-radius:6px;background:#0a0a0a;display:none"></canvas>
+    </div>
     <div style="flex:1;min-width:0">
       <h2 id="title">—</h2>
       <div id="meta-sub"></div>
@@ -1015,10 +1018,11 @@ async function buildStemPlayers(stems,names){
         +'<canvas id="stem-canvas-'+name+'" style="height:44px;background:#0a0a0a"></canvas>'
         +'<div class="playhead" id="ph-stem-'+name+'"></div>'
         +'<button id="stem-mute-'+name+'" onclick="event.stopPropagation();stemToggleMute(\''+name+'\')" '
+        +'title="'+lbl+' — klicken zum Stumm schalten" '
         +'style="position:absolute;left:0;top:0;height:100%;min-width:58px;border:none;'
         +'border-right:1px solid '+col+'44;background:'+col+'33;color:'+col+';'
         +'font-size:10px;font-weight:600;cursor:pointer;letter-spacing:0.5px">'+lbl+'</button>'
-        +'<a href="'+dlUrl+'" download="'+name+'.mp3" onclick="event.stopPropagation()" '
+        +'<a id="stem-dl-'+name+'" href="'+dlUrl+'" download="'+name+'.mp3" onclick="event.stopPropagation()" '
         +'style="position:absolute;right:0;top:0;height:100%;width:28px;display:flex;'
         +'align-items:center;justify-content:center;border-left:1px solid #1a1a1a;'
         +'background:#0d0d0d;color:#555;font-size:12px;text-decoration:none">↓</a>'
@@ -1040,7 +1044,7 @@ async function buildStemPlayers(stems,names){
       btn.style.cursor='pointer';
       btn.onclick=function(){stemToggleMute(name);};
     }
-    var dlBtn=document.querySelector('a[download="'+name+'.mp3"]');
+    var dlBtn=document.getElementById('stem-dl-'+name);
     if(dlBtn&&stems&&stems[name]){
       dlBtn.href='data:audio/mpeg;base64,'+stems[name];
       dlBtn.style.color='#555';
@@ -1232,9 +1236,10 @@ function showDummyStems(names){
         +'<button id="stem-mute-'+name+'" style="position:absolute;left:0;top:0;height:100%;min-width:58px;'
         +'border:none;border-right:1px solid '+col+'44;background:'+col+'22;color:'+col+'55;'
         +'font-size:10px;font-weight:600;cursor:default">'+lbl+'</button>'
-        +'<span style="position:absolute;right:0;top:0;height:100%;width:28px;display:flex;'
+        +'<a id="stem-dl-'+name+'" href="#" download="'+name+'.mp3" onclick="event.stopPropagation()" '
+        +'style="position:absolute;right:0;top:0;height:100%;width:28px;display:flex;'
         +'align-items:center;justify-content:center;border-left:1px solid #1a1a1a;'
-        +'background:#0d0d0d;color:#2a2a2a;font-size:12px">↓</span>'
+        +'background:#0d0d0d;color:#333;font-size:12px;text-decoration:none">↓</a>'
         +'</div></div>';
     }).join('')
     +'</div>';
@@ -1305,6 +1310,85 @@ function stemsUpdateSelects(serverData){
 // Check server on load
 setTimeout(checkDemucsServer,1000);
 // ===== END DEMUCS =====
+
+
+// ===== CUMULATIVE FREQUENCY DENSITY SPECTRUM =====
+var _densityAccum=null;  // [freqBins][amplBuckets] — uint32 counts
+var _densityAnalyser=null;
+var _densityRaf=null;
+var DENSITY_FREQ_BINS=128;
+var DENSITY_AMP_BUCKETS=128;
+var DENSITY_MAX_COUNT=0;
+
+function initDensitySpectrum(){
+  if(!audioCtx||!window._mediaSource)return;
+  if(_densityAnalyser)return;
+  _densityAnalyser=audioCtx.createAnalyser();
+  _densityAnalyser.fftSize=DENSITY_FREQ_BINS*2;
+  _densityAnalyser.smoothingTimeConstant=0;
+  try{window._mediaSource.connect(_densityAnalyser);}catch(e){}
+  _densityAccum=[];
+  for(var i=0;i<DENSITY_FREQ_BINS;i++){
+    _densityAccum.push(new Uint32Array(DENSITY_AMP_BUCKETS));
+  }
+  _densityMaxCount=0;
+  var c=document.getElementById('density-canvas');
+  if(c)c.style.display='block';
+  densityLoop();
+}
+
+function densityLoop(){
+  _densityRaf=requestAnimationFrame(densityLoop);
+  if(!_densityAnalyser||player.paused)return;
+  var buf=new Uint8Array(DENSITY_FREQ_BINS);
+  _densityAnalyser.getByteFrequencyData(buf);
+  for(var i=0;i<DENSITY_FREQ_BINS;i++){
+    var bucket=Math.floor(buf[i]/256*DENSITY_AMP_BUCKETS);
+    if(bucket>=DENSITY_AMP_BUCKETS)bucket=DENSITY_AMP_BUCKETS-1;
+    _densityAccum[i][bucket]++;
+    if(_densityAccum[i][bucket]>_densityMaxCount)_densityMaxCount=_densityAccum[i][bucket];
+  }
+  drawDensitySpectrum();
+}
+
+function drawDensitySpectrum(){
+  var c=document.getElementById('density-canvas');
+  if(!c||!_densityAccum)return;
+  var dpr=devicePixelRatio||1;
+  var size=c.clientWidth||200;
+  c.width=size*dpr;c.height=size*dpr;
+  var ctx=c.getContext('2d');
+  ctx.setTransform(dpr,0,0,dpr,0,0);
+  ctx.fillStyle='#0a0a0a';
+  ctx.fillRect(0,0,size,size);
+  if(!_densityMaxCount)return;
+
+  var cellW=size/DENSITY_FREQ_BINS;
+  var cellH=size/DENSITY_AMP_BUCKETS;
+
+  for(var f=0;f<DENSITY_FREQ_BINS;f++){
+    for(var a=0;a<DENSITY_AMP_BUCKETS;a++){
+      var count=_densityAccum[f][a];
+      if(!count)continue;
+      // Log scale brightness — rare events still visible
+      var brightness=Math.log1p(count)/Math.log1p(_densityMaxCount);
+      // Color: dark blue → cyan → white
+      var r=Math.round(brightness*brightness*200);
+      var g=Math.round(brightness*180);
+      var b=Math.round(brightness*255);
+      ctx.fillStyle='rgb('+r+','+g+','+b+')';
+      // Y: amplitude bucket 0=bottom, max=top
+      var y=size-(a+1)*cellH;
+      ctx.fillRect(f*cellW, y, cellW+0.5, cellH+0.5);
+    }
+  }
+}
+
+// Init density when player starts
+player.addEventListener('play', function(){
+  initDensitySpectrum();
+});
+// ===== END DENSITY SPECTRUM =====
 
 function detectInstruments(data){
   // Rule-based instrument detection from spectral features
