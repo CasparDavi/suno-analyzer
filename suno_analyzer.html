@@ -47,7 +47,7 @@ audio{width:100%;border-radius:8px;margin:8px 0;accent-color:#7ab8f5}
 <script src="https://cdn.jsdelivr.net/npm/onnxruntime-web@1.18.0/dist/ort.min.js"></script>
 </head>
 <body>
-<h1>Suno Audio Analyzer <span style="font-size:10px;color:#444;font-weight:400">v3.0 · Essentia+Demucs</span></h1>
+<h1>Suno Audio Analyzer <span style="font-size:10px;color:#444;font-weight:400">v3.2 · Essentia+Demucs</span></h1>
 <div id="tt"></div>
 
 <div class="section">
@@ -204,11 +204,13 @@ audio{width:100%;border-radius:8px;margin:8px 0;accent-color:#7ab8f5}
     Server nicht verfügbar — starte: <code style="color:#7ab8f5;font-size:10px">source ~/demucs-env/bin/activate && python3 ~/demucs_server.py</code>
   </div>
   <div id="stems-ui" style="display:none">
-    <button id="stems-btn" onclick="runStems()" style="padding:7px 16px;font-size:13px;border:1px solid transparent;border-radius:8px;background:#1a3a5c;color:#7ab8f5;cursor:pointer;margin-bottom:8px">
-      Stems trennen
-    </button>
-    <span id="stems-status" style="font-size:11px;color:#555;margin-left:10px"></span>
-    <div id="stems-players" style="display:none;margin-top:8px"></div>
+    <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin-bottom:8px">
+      <button id="stems-btn" onclick="runStems()" style="padding:6px 14px;font-size:12px;border:1px solid transparent;border-radius:6px;background:#1a3a5c;color:#7ab8f5;cursor:pointer">
+        Stems trennen
+      </button>
+      <span id="stems-status" style="font-size:11px;color:#555"></span>
+    </div>
+    <div id="stems-players" style="display:none"></div>
   </div>
 </div>
 
@@ -776,6 +778,22 @@ function drawEssentiaTimeline(timeline,duration){
 // ===== DEMUCS STEM SEPARATION =====
 var DEMUCS_URL='http://localhost:5001';
 var _stemsCache=null;
+var _stemBuffers={};
+var _stemNodes={};
+var _stemCtx=null;
+var _stemPlaying=false;
+var _stemStartTime=0;
+var _stemOffset=0;
+var _stemMuted={};
+var _stemNames=[];
+var _stemColors={
+  vocals:'#c06060',drums:'#5080c0',bass:'#50a050',
+  guitar:'#c0a040',piano:'#9060c0',other:'#a08040'
+};
+var _stemLabels={
+  vocals:'Gesang',drums:'Drums',bass:'Bass',
+  guitar:'Gitarre',piano:'Klavier',other:'Rest'
+};
 
 async function checkDemucsServer(){
   var statusEl=document.getElementById('stems-server-status');
@@ -784,15 +802,15 @@ async function checkDemucsServer(){
   try{
     var r=await fetch(DEMUCS_URL+'/status',{signal:AbortSignal.timeout(2000)});
     if(r.ok){
-      if(statusEl)statusEl.textContent='· Server aktiv';
-      if(statusEl)statusEl.style.color='#3a7';
+      var d=await r.json();
+      var stemCount=d.stems?d.stems.length:4;
+      if(statusEl){statusEl.textContent='· '+d.model+' ('+stemCount+' Stems)';statusEl.style.color='#3a7';}
       if(unavailEl)unavailEl.style.display='none';
       if(uiEl)uiEl.style.display='block';
       return true;
     }
   }catch(e){}
-  if(statusEl)statusEl.textContent='· Server nicht erreichbar';
-  if(statusEl)statusEl.style.color='#a55';
+  if(statusEl){statusEl.textContent='· Server nicht erreichbar';statusEl.style.color='#a55';}
   if(unavailEl)unavailEl.style.display='block';
   if(uiEl)uiEl.style.display='none';
   return false;
@@ -801,112 +819,151 @@ async function checkDemucsServer(){
 async function runStems(){
   var btn=document.getElementById('stems-btn');
   var st=document.getElementById('stems-status');
-  var playersEl=document.getElementById('stems-players');
-
-  // Get cached audio
   var uuid=extractUUID(document.getElementById('url-input').value);
   var useWav=document.getElementById('wav-toggle')&&document.getElementById('wav-toggle').checked;
   var cacheKey=uuid+(useWav?'_wav':'_mp3');
   var arrayBuf=mp3Cache[cacheKey];
-  if(!arrayBuf){st.textContent='Bitte zuerst analysieren';return;}
-
+  if(!arrayBuf){if(st)st.textContent='Bitte zuerst analysieren';return;}
   btn.disabled=true;
   if(st)st.textContent='Sende Audio...';
-
   try{
     var blob=new Blob([arrayBuf],{type:useWav?'audio/wav':'audio/mpeg'});
-    var formData=new FormData();
-    formData.append('audio',blob,uuid+(useWav?'.wav':'.mp3'));
-
-    if(st)st.textContent='Demucs läuft... (kann 1-3 Min dauern)';
-    var r=await fetch(DEMUCS_URL+'/separate',{method:'POST',body:formData});
-    if(!r.ok){
-      var err=await r.json();
-      st.textContent='Fehler: '+(err.error||r.status);
-      btn.disabled=false;return;
-    }
+    var fd=new FormData();
+    fd.append('audio',blob,uuid+(useWav?'.wav':'.mp3'));
+    if(st)st.textContent='Demucs rechnet...';
+    // Start elapsed timer
+    var t0=Date.now();
+    var timerInterval=setInterval(function(){
+      var s=Math.floor((Date.now()-t0)/1000);
+      var m=Math.floor(s/60);
+      if(st)st.textContent='Demucs rechnet... '+m+':'+(s%60<10?'0':'')+(s%60);
+    },1000);
+    var r=await fetch(DEMUCS_URL+'/separate',{method:'POST',body:fd});
+    clearInterval(timerInterval);
+    if(!r.ok){var err=await r.json();if(st)st.textContent='Fehler: '+(err.error||r.status);btn.disabled=false;return;}
     var data=await r.json();
     _stemsCache=data.stems;
-    renderStemsPlayers(data.stems);
-    if(st)st.textContent='Fertig';
+    _stemNames=data.stem_names||Object.keys(data.stems);
+    if(st)st.textContent='Fertig ·'+Math.round((Date.now()-t0)/1000)+'s';
+    await buildStemPlayers(data.stems,_stemNames);
   }catch(e){
     if(st)st.textContent='Fehler: '+e.message;
   }
   btn.disabled=false;
 }
 
-var _stemAudios={};  // {name: AudioContext buffer source}
-var _stemNodes={};   // {name: {source, gainNode}}
-var _stemCtx=null;
-var _stemPlaying=false;
-var _stemStartTime=0;
-var _stemOffset=0;
-var _stemMuted={vocals:false,drums:false,bass:false,other:false};
-var _stemBuffers={};
-
-async function renderStemsPlayers(stems){
+async function buildStemPlayers(stems,names){
   var el=document.getElementById('stems-players');
   if(!el)return;
   el.style.display='block';
 
-  var colors={vocals:'#c06060',drums:'#5080c0',bass:'#50a050',other:'#a08040'};
-  var labels={vocals:'Gesang',drums:'Drums',bass:'Bass',other:'Rest'};
-  var order=['vocals','drums','bass','other'];
+  // Decode all stems into AudioBuffers
+  if(!_stemCtx||_stemCtx.state==='closed')
+    _stemCtx=new(window.AudioContext||window.webkitAudioContext)();
 
-  // Build dark mixer UI
-  el.innerHTML='<div style="background:#0d0d0d;border-radius:8px;padding:10px 12px;border:1px solid #222">'
-    // Transport bar
-    +'<div style="display:flex;align-items:center;gap:10px;margin-bottom:10px">'
-    +'<button id="stems-pp" onclick="stemTogglePlay()" style="width:32px;height:32px;border-radius:50%;background:#1a1a1a;border:1px solid #333;color:#aaa;font-size:14px;cursor:pointer">▶</button>'
-    +'<button onclick="stemStop()" style="width:32px;height:32px;border-radius:50%;background:#1a1a1a;border:1px solid #333;color:#aaa;font-size:14px;cursor:pointer">■</button>'
-    +'<div id="stems-time" style="font-size:11px;color:#555;min-width:50px">0:00</div>'
-    +'<div style="flex:1;height:3px;background:#1a1a1a;border-radius:2px;cursor:pointer;position:relative" id="stems-progress-bar" onclick="stemSeek(event)">'
-    +'<div id="stems-progress-fill" style="height:100%;background:#333;border-radius:2px;width:0%;transition:width 0.1s"></div>'
+  _stemBuffers={};
+  _stemMuted={};
+  await Promise.all(names.map(async function(name){
+    if(!stems[name])return;
+    var bin=atob(stems[name]);
+    var ab=new ArrayBuffer(bin.length);
+    var v=new Uint8Array(ab);
+    for(var i=0;i<bin.length;i++)v[i]=bin.charCodeAt(i);
+    _stemBuffers[name]=await _stemCtx.decodeAudioData(ab);
+    _stemMuted[name]=false;
+  }));
+
+  // Build HTML — transport + waveform canvases + mute buttons
+  var dur=Object.values(_stemBuffers)[0]?Object.values(_stemBuffers)[0].duration:0;
+  el.innerHTML='<div style="background:#0a0a0a;border-radius:8px;padding:10px 12px;border:1px solid #1a1a1a">'
+    // Transport
+    +'<div style="display:flex;align-items:center;gap:8px;margin-bottom:8px">'
+    +'<button id="stems-pp" onclick="stemTogglePlay()" style="width:28px;height:28px;border-radius:50%;background:#1a1a1a;border:1px solid #333;color:#aaa;font-size:12px;cursor:pointer">▶</button>'
+    +'<button onclick="stemStop()" style="width:28px;height:28px;border-radius:50%;background:#1a1a1a;border:1px solid #333;color:#aaa;font-size:12px;cursor:pointer">■</button>'
+    +'<span id="stems-cur-time" style="font-size:10px;color:#555;min-width:36px">0:00</span>'
+    +'<span style="font-size:10px;color:#333">/ '+fmt(dur)+'</span>'
     +'</div>'
-    +'</div>'
-    // Stem rows
-    +order.filter(function(n){return stems[n];}).map(function(name){
-      var col=colors[name];
-      var lbl=labels[name];
-      var url='data:audio/mpeg;base64,'+stems[name];
-      return '<div style="display:flex;align-items:center;gap:8px;margin-bottom:5px">'
-        +'<button id="mute-'+name+'" onclick="stemToggleMute(\''+name+'\')" '
-        +'style="min-width:52px;height:22px;border-radius:4px;border:1px solid '+col+'33;'
-        +'background:#111;color:'+col+';font-size:10px;font-weight:500;cursor:pointer">'+lbl+'</button>'
-        +'<div style="flex:1;height:4px;background:#1a1a1a;border-radius:2px;position:relative">'
-        +'<div id="vu-'+name+'" style="height:100%;background:'+col+';border-radius:2px;width:0%;transition:width 0.05s"></div>'
+    // Waveform rows
+    +names.filter(function(n){return _stemBuffers[n];}).map(function(name){
+      var col=_stemColors[name]||'#888';
+      var lbl=_stemLabels[name]||name;
+      var dlUrl='data:audio/mpeg;base64,'+stems[name];
+      return '<div style="margin-bottom:4px">'
+        +'<div style="display:flex;align-items:center;gap:6px;margin-bottom:2px">'
+        +'<button id="stem-mute-'+name+'" onclick="stemToggleMute(\''+name+'\')" '
+        +'style="min-width:52px;height:20px;border-radius:3px;border:1px solid '+col+'55;'
+        +'background:#111;color:'+col+';font-size:10px;cursor:pointer">'+lbl+'</button>'
+        +'<a href="'+dlUrl+'" download="'+name+'.mp3" style="font-size:9px;color:#333;text-decoration:none;padding:1px 5px;border:1px solid #222;border-radius:2px">↓</a>'
         +'</div>'
-        +'<a href="'+url+'" download="'+name+'.mp3" '
-        +'style="font-size:10px;color:#444;text-decoration:none;padding:2px 6px;border:1px solid #222;border-radius:3px">↓</a>'
+        +'<div class="chart-outer" style="height:40px;cursor:pointer" onclick="stemSeekClick(event,this)">'
+        +'<canvas id="stem-canvas-'+name+'" style="height:40px;background:#0d0d0d"></canvas>'
+        +'<div class="playhead" id="ph-stem-'+name+'"></div>'
+        +'</div>'
         +'</div>';
     }).join('')
     +'</div>';
 
-  // Decode all stems into AudioBuffers
-  if(!_stemCtx||_stemCtx.state==='closed'){
-    _stemCtx=new(window.AudioContext||window.webkitAudioContext)();
-  }
-  _stemBuffers={};
-  var stemNames=order.filter(function(n){return stems[n];});
-  await Promise.all(stemNames.map(async function(name){
-    var b64=stems[name];
-    var bin=atob(b64);
-    var ab=new ArrayBuffer(bin.length);
-    var view=new Uint8Array(ab);
-    for(var i=0;i<bin.length;i++) view[i]=bin.charCodeAt(i);
-    _stemBuffers[name]=await _stemCtx.decodeAudioData(ab);
-  }));
+  // Draw waveforms
+  names.forEach(function(name){
+    if(_stemBuffers[name])drawStemWaveform(name,_stemBuffers[name]);
+  });
 
-  document.getElementById('stems-pp').textContent='▶';
-  _stemPlaying=false;
-  _stemOffset=0;
-
-  // Start VU meter RAF
+  _stemOffset=0;_stemPlaying=false;
   stemVuLoop();
 }
 
+function drawStemWaveform(name,buf){
+  var c=document.getElementById('stem-canvas-'+name);
+  if(!c)return;
+  var col=_stemColors[name]||'#888';
+  var dpr=devicePixelRatio||1;
+  var w=c.clientWidth||c.offsetWidth||800;
+  var h=40;
+  c.width=w*dpr;c.height=h*dpr;
+  var ctx=c.getContext('2d');
+  ctx.setTransform(dpr,0,0,dpr,0,0);
+  ctx.clearRect(0,0,w,h);
+
+  var data=buf.getChannelData(0);
+  var view=getView?getView():{start:0,end:1};
+  var s=Math.floor(view.start*data.length);
+  var e=Math.ceil(view.end*data.length);
+  var slice=data.subarray(s,e);
+  var step=Math.max(1,Math.floor(slice.length/w));
+  var mid=h/2;
+
+  // Fill background with dark tint
+  ctx.fillStyle='#0d0d0d';
+  ctx.fillRect(0,0,w,h);
+
+  // Waveform fill
+  ctx.beginPath();
+  ctx.moveTo(0,mid);
+  for(var i=0;i<w;i++){
+    var idx=Math.floor(i*slice.length/w);
+    var max=0;
+    for(var j=0;j<step&&idx+j<slice.length;j++)max=Math.max(max,Math.abs(slice[idx+j]));
+    ctx.lineTo(i,mid-max*mid*0.9);
+  }
+  for(var i=w-1;i>=0;i--){
+    var idx=Math.floor(i*slice.length/w);
+    var max=0;
+    for(var j=0;j<step&&idx+j<slice.length;j++)max=Math.max(max,Math.abs(slice[idx+j]));
+    ctx.lineTo(i,mid+max*mid*0.9);
+  }
+  ctx.closePath();
+  ctx.fillStyle=col+'55';
+  ctx.fill();
+
+  // Center line
+  ctx.strokeStyle=col+'33';
+  ctx.lineWidth=0.5;
+  ctx.beginPath();ctx.moveTo(0,mid);ctx.lineTo(w,mid);ctx.stroke();
+
+  markReady('stem-canvas-'+name);
+}
+
 function stemCreateNodes(offset){
-  // Stop existing
   Object.values(_stemNodes).forEach(function(n){try{n.source.stop();}catch(e){}});
   _stemNodes={};
   Object.keys(_stemBuffers).forEach(function(name){
@@ -933,6 +990,8 @@ function stemTogglePlay(){
     _stemPlaying=false;
     document.getElementById('stems-pp').textContent='▶';
   } else {
+    // Pause main player
+    if(!player.paused){player.pause();}
     stemCreateNodes(_stemOffset);
     _stemPlaying=true;
     document.getElementById('stems-pp').textContent='⏸';
@@ -944,72 +1003,21 @@ function stemStop(){
   _stemNodes={};
   _stemPlaying=false;
   _stemOffset=0;
-  _stemStartTime=0;
   var pp=document.getElementById('stems-pp');
   if(pp)pp.textContent='▶';
-  var fill=document.getElementById('stems-progress-fill');
-  if(fill)fill.style.width='0%';
-  var t=document.getElementById('stems-time');
-  if(t)t.textContent='0:00';
+  updateStemPlayheads(0);
 }
 
 function stemToggleMute(name){
   _stemMuted[name]=!_stemMuted[name];
-  var btn=document.getElementById('mute-'+name);
-  var colors={vocals:'#c06060',drums:'#5080c0',bass:'#50a050',other:'#a08040'};
-  var col=colors[name];
-  if(btn){
-    btn.style.opacity=_stemMuted[name]?'0.3':'1';
-    btn.style.textDecoration=_stemMuted[name]?'line-through':'none';
-  }
-  if(_stemNodes[name]){
-    _stemNodes[name].gain.gain.setTargetAtTime(_stemMuted[name]?0:1,_stemCtx.currentTime,0.02);
-  }
+  var btn=document.getElementById('stem-mute-'+name);
+  if(btn){btn.style.opacity=_stemMuted[name]?'0.3':'1';btn.style.textDecoration=_stemMuted[name]?'line-through':'none';}
+  if(_stemNodes[name])_stemNodes[name].gain.gain.setTargetAtTime(_stemMuted[name]?0:1,_stemCtx.currentTime,0.02);
 }
 
-function stemSeek(e){
+function stemSeekClick(e,outer){
   if(!Object.keys(_stemBuffers).length)return;
-  var bar=document.getElementById('stems-progress-bar');
-  var rect=bar.getBoundingClientRect();
-  var pct=(e.clientX-rect.left)/rect.width;
-  var dur=Object.values(_stemBuffers)[0].duration;
-  _stemOffset=Math.max(0,Math.min(dur,pct*dur));
-  if(_stemPlaying){
-    Object.values(_stemNodes).forEach(function(n){try{n.source.stop();}catch(e){}});
-    stemCreateNodes(_stemOffset);
-  }
-}
-
-function stemVuLoop(){
-  requestAnimationFrame(stemVuLoop);
-  if(!_stemPlaying||!_stemCtx)return;
-  var pos=_stemCtx.currentTime-_stemStartTime;
-  var dur=Object.values(_stemBuffers).length?Object.values(_stemBuffers)[0].duration:0;
-  if(!dur)return;
-  var pct=Math.min(1,pos/dur)*100;
-  var fill=document.getElementById('stems-progress-fill');
-  if(fill)fill.style.width=pct+'%';
-  var t=document.getElementById('stems-time');
-  if(t)t.textContent=fmt(pos);
-  // Simple VU: random placeholder until we add analyser nodes
-  // For now just show activity indicator
-  Object.keys(_stemBuffers).forEach(function(name){
-    var vu=document.getElementById('vu-'+name);
-    if(vu&&!_stemMuted[name]){
-      var w=20+Math.random()*60;
-      vu.style.width=w+'%';
-    } else if(vu){
-      vu.style.width='0%';
-    }
-  });
-  // Auto-stop at end
-  if(pos>=dur) stemStop();
-}
-
-function stemSeek(e){
-  if(!Object.keys(_stemBuffers).length)return;
-  var bar=document.getElementById('stems-progress-bar');
-  var rect=bar.getBoundingClientRect();
+  var rect=outer.getBoundingClientRect();
   var pct=Math.max(0,Math.min(1,(e.clientX-rect.left)/rect.width));
   var dur=Object.values(_stemBuffers)[0].duration;
   _stemOffset=pct*dur;
@@ -1017,10 +1025,51 @@ function stemSeek(e){
     Object.values(_stemNodes).forEach(function(n){try{n.source.stop();}catch(e){}});
     stemCreateNodes(_stemOffset);
   }
+  updateStemPlayheads(pct);
 }
 
-// Check server on load and after each analysis
-setTimeout(checkDemucsServer, 1000);
+function updateStemPlayheads(pct){
+  _stemNames.forEach(function(name){
+    var ph=document.getElementById('ph-stem-'+name);
+    var c=document.getElementById('stem-canvas-'+name);
+    if(!ph||!c)return;
+    ph.style.display='block';
+    ph.style.left=Math.round(pct*c.offsetWidth)+'px';
+  });
+  var t=document.getElementById('stems-cur-time');
+  var dur=Object.values(_stemBuffers).length?Object.values(_stemBuffers)[0].duration:0;
+  if(t)t.textContent=fmt(pct*dur);
+}
+
+function stemVuLoop(){
+  requestAnimationFrame(stemVuLoop);
+  if(!_stemPlaying||!_stemCtx||!Object.keys(_stemBuffers).length)return;
+  var pos=_stemCtx.currentTime-_stemStartTime;
+  var dur=Object.values(_stemBuffers)[0].duration;
+  if(!dur)return;
+  var pct=Math.min(1,Math.max(0,pos/dur));
+  updateStemPlayheads(pct);
+  if(pos>=dur)stemStop();
+}
+
+// Redraw stem waveforms on zoom
+var _origRedrawAllCharts=null;
+document.addEventListener('DOMContentLoaded',function(){
+  // Hook into zoom redraws
+});
+function redrawStemWaveforms(){
+  _stemNames.forEach(function(name){
+    if(_stemBuffers[name])drawStemWaveform(name,_stemBuffers[name]);
+  });
+}
+
+// Pause stems when main player plays
+player.addEventListener('play',function(){
+  if(_stemPlaying)stemStop();
+});
+
+// Check server on load
+setTimeout(checkDemucsServer,1000);
 // ===== END DEMUCS =====
 
 function detectInstruments(data){
@@ -1240,6 +1289,7 @@ function redrawAllCharts(){
     if(d.fft.harmDens)drawCurve('harmdense-canvas',d.fft.harmDens,'#aaaaaa',70,d.fft.dur,function(ctx,w,h){[{v:0,l:'0'},{v:4,l:'4'},{v:8,l:'8'},{v:12,l:'12'},{v:16,l:'16'}].forEach(function(r){var y=h-(r.v/16)*h*0.88-h*0.06;ctx.fillStyle='rgba(255,255,255,0.06)';ctx.fillRect(0,Math.round(y),w,1);ctx.font='8px system-ui';ctx.fillStyle='rgba(255,255,255,0.35)';ctx.fillText(r.l,3,Math.round(y)-2);});},0,16);
   }
   if(d.essentia)drawEssentiaTimeline(d.essentia.timeline,d.essentia.duration);
+  redrawStemWaveforms();
 }
 
 // store all chart data for redraw
