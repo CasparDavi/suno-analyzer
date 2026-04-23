@@ -47,7 +47,7 @@ audio{width:100%;border-radius:8px;margin:8px 0;accent-color:#7ab8f5}
 <script src="https://cdn.jsdelivr.net/npm/onnxruntime-web@1.18.0/dist/ort.min.js"></script>
 </head>
 <body>
-<h1>Suno Audio Analyzer <span style="font-size:10px;color:#444;font-weight:400">v2.5 · Essentia</span></h1>
+<h1>Suno Audio Analyzer <span style="font-size:10px;color:#444;font-weight:400">v2.6 · Essentia</span></h1>
 <div id="tt"></div>
 
 <div class="section">
@@ -188,7 +188,7 @@ audio{width:100%;border-radius:8px;margin:8px 0;accent-color:#7ab8f5}
   </div>
   <div id="essentia-summary" style="font-size:11px;color:#888;margin:4px 0 6px;min-height:16px">Essentia noch nicht geladen.</div>
   <div class="chart-outer" style="height:560px">
-    <canvas id="essentia-canvas" style="height:560px;background:#0a0a0a" class="chart-pending">berechne...</canvas>
+    <canvas id="essentia-canvas" style="height:160px;background:#0a0a0a" class="chart-pending">berechne...</canvas>
     <div class="playhead" id="ph-essentia"></div>
   </div>
 </div>
@@ -704,9 +704,19 @@ async function runEssentia(buf){
 function drawEssentiaTimeline(timeline,duration){
   var c=document.getElementById('essentia-canvas');
   if(!c||!timeline||!timeline.length)return;
+
+  // Sum signal over all time points per class, sort descending, take top 10
+  var sums=ESSENTIA_CLASSES.map(function(cls,r){
+    var sum=0;
+    for(var i=0;i<timeline.length;i++) sum+=timeline[i][r]||0;
+    return {name:cls,idx:r,sum:sum};
+  });
+  sums.sort(function(a,b){return b.sum-a.sum;});
+  var top10=sums.slice(0,10);
+
   var dpr=devicePixelRatio||1;
-  var rowH=14;
-  var h=ESSENTIA_CLASSES.length*rowH;
+  var rowH=16;
+  var h=top10.length*rowH;
   c.style.height=h+'px';
   var w=c.clientWidth||c.offsetWidth||820;
   c.width=w*dpr;c.height=h*dpr;
@@ -718,26 +728,26 @@ function drawEssentiaTimeline(timeline,duration){
   var e=Math.min(timeline.length,Math.max(s+1,Math.ceil(view.end*timeline.length)));
   var slice=timeline.slice(s,e);
   var colW=Math.max(1,w/slice.length+0.5);
-  ESSENTIA_CLASSES.forEach(function(cls,r){
-    var y=r*rowH;
-    ctx.fillStyle=r%2===0?'rgba(255,255,255,0.02)':'rgba(0,0,0,0.1)';
+
+  top10.forEach(function(item,row){
+    var r=item.idx; // original class index — preserves color
+    var y=row*rowH;
+    ctx.fillStyle=row%2===0?'rgba(255,255,255,0.02)':'rgba(0,0,0,0.1)';
     ctx.fillRect(0,y,w,rowH-1);
     slice.forEach(function(frame,i){
       var val=Math.min(1,Math.max(0,(frame[r]||0)*5));
       if(val<0.05)return;
       var alpha=Math.min(0.97,0.1+val*0.87);
-      // Color by class group
-      var hue=r/ESSENTIA_CLASSES.length*240;
+      var hue=r/ESSENTIA_CLASSES.length*240; // color from original index
       ctx.fillStyle='hsla('+hue+',70%,65%,'+alpha.toFixed(2)+')';
       ctx.fillRect(Math.floor(i/slice.length*w),y,colW,rowH-1);
     });
-    ctx.fillStyle='rgba(0,0,0,0.55)';ctx.fillRect(0,y,80,rowH-1);
+    ctx.fillStyle='rgba(0,0,0,0.55)';ctx.fillRect(0,y,86,rowH-1);
     ctx.fillStyle='#9aa6b2';ctx.font='9px system-ui';
-    ctx.fillText(cls,3,y+rowH-3);
+    ctx.fillText(item.name,3,y+rowH-4);
   });
   markReady('essentia-canvas');
   drawTimeAxis(ctx,w,h,duration);
-  // sync chart-outer height to canvas so playhead spans full height
   var outer=c.parentElement;
   if(outer)outer.style.height=h+'px';
 }
