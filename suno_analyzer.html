@@ -44,8 +44,6 @@ audio{width:100%;border-radius:8px;margin:8px 0;accent-color:#7ab8f5}
 .section-status{font-size:9px;color:#444;margin-left:8px;vertical-align:middle}
 #tt{position:fixed;background:#1e1e1e;border:0.5px solid #444;border-radius:6px;padding:6px 10px;font-size:12px;color:#eee;pointer-events:none;opacity:0;max-width:280px;line-height:1.5;z-index:9999;transition:opacity 0.1s;width:auto;height:auto}
 </style>
-<script src="https://cdn.jsdelivr.net/npm/@tensorflow/tfjs@4.22.0/dist/tf.min.js"></script>
-<script src="https://cdn.jsdelivr.net/npm/@tensorflow-models/yamnet@0.0.2/dist/yamnet.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/onnxruntime-web@1.18.0/dist/ort.min.js"></script>
 </head>
 <body>
@@ -178,75 +176,6 @@ audio{width:100%;border-radius:8px;margin:8px 0;accent-color:#7ab8f5}
   <div id="instruments-wrap" style="display:flex;flex-wrap:wrap;gap:6px;margin-top:4px"></div>
 </div>
 
-<div class="section" id="yamnet-section">
-  <div class="slbl">
-    <span>Instrument-Erkennung (YAMNet ML)</span>
-    <span style="display:flex;align-items:center;gap:8px;flex-wrap:wrap">
-      <label style="font-size:11px;color:#555;display:flex;align-items:center;gap:4px;cursor:pointer">
-        <input type="checkbox" id="yamnet-toggle" checked style="accent-color:#7ab8f5">aktiv
-      </label>
-      <button onclick="probeYamnet()" style="font-size:11px;padding:2px 7px;border:1px solid #333;border-radius:4px;background:transparent;color:#666;cursor:pointer">Probe</button>
-      <span id="yamnet-probe-status" style="font-size:10px;color:#555"></span>
-    </span>
-  </div>
-
-  <!-- Top events raw -->
-  <div id="yamnet-summary" style="font-size:11px;color:#888;margin:4px 0 8px;min-height:16px">YAMNet noch nicht geladen.</div>
-
-  <!-- Control console -->
-  <div id="yamnet-controls" style="display:none;background:#0d0d0d;border-radius:6px;padding:10px 12px;margin-bottom:8px">
-    <div style="display:flex;gap:16px;flex-wrap:wrap;align-items:flex-start">
-
-      <!-- Threshold slider -->
-      <div style="min-width:160px">
-        <div style="font-size:10px;color:#555;margin-bottom:4px">Min-Score (Schwellwert)</div>
-        <div style="display:flex;align-items:center;gap:6px">
-          <input type="range" id="yn-threshold" min="1" max="30" value="2" step="1"
-            style="width:100px;accent-color:#7ab8f5" oninput="yamnetUpdateControls()">
-          <span id="yn-threshold-lbl" style="font-size:11px;color:#7ab8f5;min-width:30px">0.02</span>
-        </div>
-      </div>
-
-      <!-- Row height -->
-      <div style="min-width:140px">
-        <div style="font-size:10px;color:#555;margin-bottom:4px">Zeilenhöhe</div>
-        <div style="display:flex;align-items:center;gap:6px">
-          <input type="range" id="yn-rowheight" min="10" max="40" value="17" step="1"
-            style="width:90px;accent-color:#7ab8f5" oninput="yamnetUpdateControls()">
-          <span id="yn-rowheight-lbl" style="font-size:11px;color:#7ab8f5;min-width:24px">17</span>
-        </div>
-      </div>
-
-      <!-- Color scale -->
-      <div style="min-width:140px">
-        <div style="font-size:10px;color:#555;margin-bottom:4px">Farbverstärkung</div>
-        <div style="display:flex;align-items:center;gap:6px">
-          <input type="range" id="yn-boost" min="1" max="30" value="8" step="1"
-            style="width:90px;accent-color:#7ab8f5" oninput="yamnetUpdateControls()">
-          <span id="yn-boost-lbl" style="font-size:11px;color:#7ab8f5;min-width:24px">5×</span>
-        </div>
-      </div>
-    </div>
-
-    <!-- Group checkboxes -->
-    <div style="margin-top:8px">
-      <div style="font-size:10px;color:#555;margin-bottom:4px">Angezeigte Gruppen</div>
-      <div id="yn-group-checks" style="display:flex;flex-wrap:wrap;gap:6px 12px"></div>
-    </div>
-
-    <!-- Raw top events -->
-    <div style="margin-top:8px">
-      <div style="font-size:10px;color:#555;margin-bottom:4px">Rohe Top-Events (alle erkannten Labels)</div>
-      <div id="yn-raw-events" style="font-size:10px;color:#666;line-height:1.6"></div>
-    </div>
-  </div>
-
-  <div class="chart-outer">
-    <canvas id="yamnet-canvas" style="background:#0a0a0a" class="chart-pending">berechne...</canvas>
-    <div class="playhead" id="ph-yamnet"></div>
-  </div>
-</div>
-
 <div class="section" id="essentia-section" style="display:none">
   <div class="slbl">
     <span>Instrument-Erkennung (Essentia MTG) <span style="font-size:10px;color:#555">· Jamendo 40 Klassen</span></span>
@@ -259,7 +188,7 @@ audio{width:100%;border-radius:8px;margin:8px 0;accent-color:#7ab8f5}
   </div>
   <div id="essentia-summary" style="font-size:11px;color:#888;margin:4px 0 6px;min-height:16px">Essentia noch nicht geladen.</div>
   <div class="chart-outer">
-    <canvas id="essentia-canvas" style="background:#0a0a0a" class="chart-pending">berechne...</canvas>
+    <canvas id="essentia-canvas" style="height:560px;background:#0a0a0a" class="chart-pending">berechne...</canvas>
     <div class="playhead" id="ph-essentia"></div>
   </div>
 </div>
@@ -395,7 +324,7 @@ function exportForLLM(btn){
   }
 }
 var player=document.getElementById('player');
-var phIds=['lufs','energy','onset','bpm','stereo','vocal','crest','flux','harm','pitch','tilt','harmdense','chroma','spectro','stereospectro','entropy','inharm','yamnet','essentia'];
+var phIds=['lufs','energy','onset','bpm','stereo','vocal','crest','flux','harm','pitch','tilt','harmdense','chroma','spectro','stereospectro','entropy','inharm','essentia'];
 
 // Custom player controls
 function togglePlay(){
@@ -496,540 +425,6 @@ document.getElementById('zoom-slider').oninput=updateZoom;
 
 // redraw all charts with current view
 
-// ===== YAMNET ML INSTRUMENT RECOGNITION =====
-var yamnetModel=null, yamnetClassNames=null, yamnetTfReady=false;
-
-var YAMNET_CFG={
-  tfjsUrl:'https://cdn.jsdelivr.net/npm/@tensorflow/tfjs@4.22.0/dist/tf.min.js',
-  modelUrl:'https://dogbarkingdetector.com/model/model.json',
-  classMapUrl:'https://dogbarkingdetector.com/model/assets/yamnet_class_map.csv',
-  targetSR:16000,
-  frameSec:0.96,
-  hopSec:0.48,
-  maxFrames:280,
-  minScore:0.02,
-  topK:15
-};
-
-// YAMNET_GROUPS: only leaf nodes or near-leaf nodes from AudioSet ontology
-// Parent nodes (Guitar, Singing, Percussion etc.) are intentionally excluded
-// to avoid double-counting with their children
-// Exception: parent used as proxy when no leaf children are in top scores
-var YAMNET_GROUPS={
-  stimme_maennlich:[
-    'Male singing','Male speech, man speaking'
-  ],
-  stimme_weiblich:[
-    'Female singing','Female speech, woman speaking','Child singing','Child speech, kid speaking'
-  ],
-  stimme_andere:[
-    'Choir','Yodeling','Rapping','Humming','Beatboxing','A capella','Mantra','Lullaby'
-  ],
-  gitarre_elektrisch:[
-    'Electric guitar','Steel guitar, slide guitar','Tapping (guitar technique)','Distortion'
-  ],
-  gitarre_akustisch:[
-    'Acoustic guitar'
-  ],
-  gitarre_sonstig:[
-    'Banjo','Ukulele','Mandolin','Sitar','Kora','Lute','Shamisen','Oud'
-  ],
-  bass:[
-    'Bass guitar','Electric bass guitar','Double bass'
-  ],
-  klavier:[
-    'Piano','Electric piano','Harpsichord','Clavinet'
-  ],
-  orgel_keys:[
-    'Organ','Electronic organ','Hammond organ','Accordion','Melodica'
-  ],
-  synthesizer:[
-    'Synthesizer','Theremin','Sampler'
-  ],
-  schlagzeug:[
-    'Snare drum','Bass drum','Rimshot','Drum roll',
-    'Hi-hat','Crash cymbal','Ride cymbal','Tom-tom','Cowbell',
-    'Drum machine'
-  ],
-  percussion:[
-    'Timbales','Conga','Bongo','Maracas','Claves',
-    'Tambourine','Clapping','Finger snapping','Castanets',
-    'Gong','Tabla','Timpani','Marimba, xylophone','Vibraphone','Glockenspiel'
-  ],
-  streicher:[
-    'Violin, fiddle','Cello','Viola','Pizzicato'
-  ],
-  blaeser_blech:[
-    'Trumpet','Cornet','Bugle','French horn','Trombone','Euphonium','Tuba'
-  ],
-  blaeser_holz:[
-    'Flute','Piccolo','Oboe','Clarinet','Saxophone','Bassoon','Bagpipes','Didgeridoo'
-  ]
-};
-
-// Parent nodes used as fallback proxy when leaf scores are near zero
-// If sum of leaf children < this threshold, add parent score to group
-var YAMNET_PARENT_PROXY={
-  gitarre_elektrisch:['Guitar','Plucked string instrument'],
-  gitarre_akustisch:['Guitar'],
-  bass:['Guitar'],
-  klavier:['Keyboard (musical)'],
-  orgel_keys:['Keyboard (musical)'],
-  synthesizer:['Keyboard (musical)'],
-  schlagzeug:['Drum kit','Drum','Percussion','Cymbal'],
-  percussion:['Percussion'],
-  streicher:['Bowed string instrument','String instrument'],
-  blaeser_blech:['Brass instrument'],
-  blaeser_holz:['Wind instrument, woodwind instrument'],
-  stimme_maennlich:['Singing','Vocal music'],
-  stimme_weiblich:['Singing','Vocal music'],
-  stimme_andere:['Singing','Choir','Vocal music']
-};
-
-function initYamnetAccumulator(){
-  var acc={};
-  Object.keys(YAMNET_GROUPS).forEach(function(k){acc[k]=0;});
-  return acc;
-}
-
-async function loadScriptOnce(url,flagName){
-  if(window[flagName])return;
-  await new Promise(function(resolve,reject){
-    var existing=document.querySelector('script[data-dyn="'+flagName+'"]');
-    if(existing){existing.addEventListener('load',resolve,{once:true});existing.addEventListener('error',reject,{once:true});return;}
-    var s=document.createElement('script');
-    s.src=url;s.async=true;s.dataset.dyn=flagName;
-    s.onload=function(){window[flagName]=true;resolve();};
-    s.onerror=function(){reject(new Error('Script nicht ladbar: '+url));};
-    document.head.appendChild(s);
-  });
-}
-
-async function ensureTfjs(){
-  if(window.tf&&window.tf.tensor1d){yamnetTfReady=true;return window.tf;}
-  await loadScriptOnce(YAMNET_CFG.tfjsUrl,'__tfjsLoaded');
-  yamnetTfReady=!!(window.tf&&window.tf.tensor1d);
-  if(!yamnetTfReady)throw new Error('TensorFlow.js wurde geladen, aber tf ist nicht verfügbar');
-  try{await tf.ready();}catch(e){}
-  return window.tf;
-}
-
-async function fetchText(url){
-  var r=await fetch(url,{mode:'cors',cache:'force-cache'});
-  if(!r.ok)throw new Error('Fetch fehlgeschlagen: '+url+' ('+r.status+')');
-  return await r.text();
-}
-
-function parseYamnetClassMap(csv){
-  return csv.trim().split(/\r?\n/).slice(1).map(function(line){
-    var parts=line.match(/(?:"([^"]*)"|([^,]+))/g)||[];
-    var clean=parts.map(function(p){return p.replace(/^"|"$/g,'').trim();});
-    return clean[2]||clean[1]||clean[0]||'';
-  });
-}
-
-async function ensureYamnetResources(){
-  await ensureTfjs();
-  if(!yamnetClassNames){
-    var csv=await fetchText(YAMNET_CFG.classMapUrl);
-    yamnetClassNames=parseYamnetClassMap(csv);
-  }
-  if(!yamnetModel){
-    yamnetModel=await tf.loadGraphModel(YAMNET_CFG.modelUrl,{fromTFHub:false});
-  }
-}
-
-async function extractYamnetScores(out){
-  var list=[];
-  if(Array.isArray(out))list=out;
-  else if(out&&typeof out==='object'&&!(out instanceof tf.Tensor))list=Object.values(out);
-  else if(out)list=[out];
-  var scoreTensor=list.find(function(t){return t&&t.shape&&t.shape[t.shape.length-1]===521;})||list[0];
-  if(!scoreTensor)throw new Error('Keine Scores im YAMNet-Output');
-  var arr=await scoreTensor.array();
-  while(Array.isArray(arr)&&Array.isArray(arr[0]))arr=arr[0];
-  return arr;
-}
-
-function disposeYamnetOutputs(out){
-  if(Array.isArray(out))out.forEach(function(t){try{t.dispose&&t.dispose();}catch(e){}});
-  else if(out&&typeof out==='object'&&!(out instanceof tf.Tensor))Object.values(out).forEach(function(t){try{t.dispose&&t.dispose();}catch(e){}});
-  else if(out&&out.dispose)try{out.dispose();}catch(e){}
-}
-
-function resampleLinear(input,srcRate,dstRate){
-  if(srcRate===dstRate)return new Float32Array(input);
-  var ratio=srcRate/dstRate;
-  var outLen=Math.max(1,Math.round(input.length/ratio));
-  var out=new Float32Array(outLen);
-  for(var i=0;i<outLen;i++){
-    var pos=i*ratio;
-    var lo=Math.floor(pos),hi=Math.min(lo+1,input.length-1);
-    out[i]=input[lo]+(pos-lo)*(input[hi]-input[lo]);
-  }
-  return out;
-}
-
-function inferYamnetGroups(label){
-  var low=label.toLowerCase();
-  var out=[];
-  Object.keys(YAMNET_GROUPS).forEach(function(group){
-    var hit=YAMNET_GROUPS[group].some(function(token){
-      var tlow=token.toLowerCase();
-      // exact match OR label contains token OR token contains label
-      return low===tlow || low.indexOf(tlow)>=0 || tlow.indexOf(low)>=0;
-    });
-    if(hit)out.push(group);
-  });
-  return out;
-}
-
-// Labels that are purely generic parent nodes — never map to any group directly
-var YAMNET_SKIP_LABELS=[
-  'music','musical instrument','musical ensemble','sound','audio','silence',
-  'inside small room','outside urban','environmental noise',
-  'guitar','singing','speech','percussion','drum','cymbal',
-  'string instrument','plucked string instrument','bowed string instrument',
-  'brass instrument','wind instrument, woodwind instrument','keyboard (musical)',
-  'vocal music',
-  // genre parent nodes — too broad, children only
-  'electronic music','rock music','pop music','folk music','jazz',
-  'blues','classical music','country music','r&b and soul','hip hop music',
-  'dance music','music genre','exciting music','angry music','happy music',
-  'sad music','tender music','scary music','funny music',
-  // genre leaf nodes — all ignored
-  'house music','techno','trance music','dubstep','drum and bass',
-  'ambient music','electronic dance music','disco','new-age music','electronica',
-  'heavy metal','punk rock','grunge','industrial music','psychedelic rock',
-  'soul music','funk','reggae','gospel music'
-];
-
-function isSkipLabel(label){
-  var low=label.toLowerCase();
-  return YAMNET_SKIP_LABELS.indexOf(low)>=0;
-}
-
-function collapseYamnetScores(scores){
-  if(!yamnetClassNames||!scores)return initYamnetAccumulator();
-
-  // Build label→score lookup for proxy fallback
-  var labelScore={};
-  for(var i=0;i<scores.length&&i<yamnetClassNames.length;i++){
-    labelScore[yamnetClassNames[i].toLowerCase()]=+scores[i]||0;
-  }
-
-  var groups=initYamnetAccumulator();
-
-  // Pass 1: accumulate leaf node scores
-  for(var i=0;i<scores.length&&i<yamnetClassNames.length;i++){
-    var s=+scores[i]||0;
-    if(s<YAMNET_CFG.minScore)continue;
-    var label=yamnetClassNames[i];
-    if(isSkipLabel(label))continue;
-    inferYamnetGroups(label).forEach(function(g){groups[g]+=s;});
-  }
-
-  // Pass 2: parent proxy fallback — if a group got almost nothing from leaves,
-  // check if a parent node has signal and add it as proxy
-  var PROXY_THRESHOLD=0.05; // if leaf sum < this, use parent
-  Object.keys(YAMNET_PARENT_PROXY).forEach(function(g){
-    if((groups[g]||0)>=PROXY_THRESHOLD)return; // leaves already have signal
-    var parentLabels=YAMNET_PARENT_PROXY[g]||[];
-    var parentScore=0;
-    parentLabels.forEach(function(pl){
-      parentScore=Math.max(parentScore,labelScore[pl.toLowerCase()]||0);
-    });
-    if(parentScore>YAMNET_CFG.minScore){
-      // distribute parent score across this group with discount factor
-      groups[g]+=parentScore*0.5;
-    }
-  });
-
-  return groups;
-}
-
-function inferYamnetGroups(label){
-  var low=label.toLowerCase();
-  var out=[];
-  Object.keys(YAMNET_GROUPS).forEach(function(group){
-    var hit=YAMNET_GROUPS[group].some(function(token){
-      var tlow=token.toLowerCase();
-      // exact match OR label contains token OR token contains label
-      return low===tlow || low.indexOf(tlow)>=0 || tlow.indexOf(low)>=0;
-    });
-    if(hit)out.push(group);
-  });
-  return out;
-}
-
-// Labels that are too generic and swamp specific instrument scores
-var YAMNET_GENERIC_LABELS=['music','musical instrument','musical ensemble',
-  'speech','sound','audio','noise','silence','inside small room','outside urban'];
-
-function isGenericYamnetLabel(label){
-  var low=label.toLowerCase();
-  return YAMNET_GENERIC_LABELS.some(function(g){return low===g;});
-}
-
-function collapseYamnetScores(scores){
-  var groups=initYamnetAccumulator();
-  if(!yamnetClassNames||!scores)return groups;
-  // First pass: sum of non-generic scores for normalization
-  var specificSum=0;
-  for(var i=0;i<scores.length&&i<yamnetClassNames.length;i++){
-    var s=+scores[i]||0;
-    if(s>=YAMNET_CFG.minScore&&!isGenericYamnetLabel(yamnetClassNames[i]))specificSum+=s;
-  }
-  // Second pass: accumulate, boost specific scores if genericsum dominates
-  var boostFactor=specificSum<0.1?3.0:1.0;
-  for(var i=0;i<scores.length&&i<yamnetClassNames.length;i++){
-    var s=+scores[i]||0;
-    if(s<YAMNET_CFG.minScore)continue;
-    if(isGenericYamnetLabel(yamnetClassNames[i]))continue; // skip generic
-    var hits=inferYamnetGroups(yamnetClassNames[i]);
-    hits.forEach(function(g){groups[g]+=s*boostFactor;});
-  }
-  return groups;
-}
-
-function topYamnetLabels(scores,k,minScore){
-  var arr=[];
-  if(!yamnetClassNames||!scores)return arr;
-  for(var i=0;i<scores.length&&i<yamnetClassNames.length;i++){
-    var s=+scores[i]||0;
-    if(s>=minScore)arr.push({label:yamnetClassNames[i],score:s});
-  }
-  return arr.sort(function(a,b){return b.score-a.score;}).slice(0,k);
-}
-
-async function runYamnetFrame(frame){
-  var out, tensors=[];
-  try{
-    var t1=tf.tensor1d(frame);tensors.push(t1);
-    try{
-      out=yamnetModel.predict?yamnetModel.predict(t1):await yamnetModel.executeAsync(t1);
-    }catch(e1){
-      var t2=tf.tensor2d(frame,[1,frame.length]);tensors.push(t2);
-      out=yamnetModel.predict?yamnetModel.predict(t2):await yamnetModel.executeAsync(t2);
-    }
-    var scores=await extractYamnetScores(out);
-    disposeYamnetOutputs(out);
-    return scores;
-  }finally{
-    tensors.forEach(function(t){try{t.dispose();}catch(e){}});
-  }
-}
-
-function clearYamnetCanvas(){
-  var c=document.getElementById('yamnet-canvas');
-  if(!c)return;
-  var ctx=c.getContext('2d');
-  ctx.clearRect(0,0,c.width,c.height);
-  c.classList.remove('chart-ready');
-  c.classList.add('chart-pending');
-}
-
-async function probeYamnet(){
-  var out=document.getElementById('yamnet-probe-status');
-  if(out)out.textContent='prüfe...';
-  var parts=[];
-  try{await ensureTfjs();parts.push('tfjs ok');}catch(e){parts.push('tfjs FEHLER: '+e.message);}
-  try{
-    var r=await fetch(YAMNET_CFG.modelUrl,{mode:'cors',cache:'no-store'});
-    parts.push(r.ok?'model ok':'model HTTP '+r.status);
-  }catch(e){parts.push('model FEHLER: '+e.message);}
-  try{
-    var r2=await fetch(YAMNET_CFG.classMapUrl,{mode:'cors',cache:'no-store'});
-    parts.push(r2.ok?'classmap ok':'classmap HTTP '+r2.status);
-  }catch(e){parts.push('classmap FEHLER: '+e.message);}
-  if(out)out.textContent=parts.join(' | ');
-}
-
-function mixToMono(buf){
-  var ch0=buf.getChannelData(0);
-  var ch1=buf.numberOfChannels>1?buf.getChannelData(1):ch0;
-  var mono=new Float32Array(ch0.length);
-  for(var i=0;i<mono.length;i++)mono[i]=0.5*(ch0[i]+ch1[i]);
-  return mono;
-}
-
-async function runYamnet(buf){
-  var enabled=document.getElementById('yamnet-toggle');
-  if(enabled&&!enabled.checked){
-    var ys=document.getElementById('yamnet-summary');
-    if(ys)ys.textContent='YAMNet deaktiviert.';
-    clearYamnetCanvas();
-    return;
-  }
-  try{
-    var ys=document.getElementById('yamnet-summary');
-    if(ys)ys.textContent='Lade TensorFlow.js / YAMNet...';
-    await ensureYamnetResources();
-    if(ys)ys.textContent='Analysiere Instrument-/Ereignisgruppen...';
-    var mono=mixToMono(buf);
-    var audio16=resampleLinear(mono,buf.sampleRate,YAMNET_CFG.targetSR);
-    var frameLen=Math.round(YAMNET_CFG.frameSec*YAMNET_CFG.targetSR);
-    var hop=Math.max(1,Math.round(YAMNET_CFG.hopSec*YAMNET_CFG.targetSR));
-    var rawFrames=Math.max(1,Math.floor((audio16.length-frameLen)/hop)+1);
-    var stride=rawFrames>YAMNET_CFG.maxFrames?Math.ceil(rawFrames/YAMNET_CFG.maxFrames):1;
-    var timeline=[];
-    var topLabels={};
-    for(var fi=0,idx=0;idx+frameLen<=audio16.length;idx+=hop*stride,fi++){
-      var frame=audio16.subarray(idx,idx+frameLen);
-      var scores=await runYamnetFrame(frame);
-      if(!scores)continue;
-      var groups=collapseYamnetScores(scores);
-      timeline.push(groups);
-      topYamnetLabels(scores,YAMNET_CFG.topK,YAMNET_CFG.minScore).forEach(function(item){
-        topLabels[item.label]=(topLabels[item.label]||0)+item.score;
-      });
-      if(fi%6===0){
-        var pct=Math.round(100*Math.min(1,(idx+frameLen)/audio16.length));
-        if(ys)ys.textContent='YAMNet analysiert... '+pct+'%';
-        await tf.nextFrame();
-      }
-    }
-    if(!timeline.length){
-      if(ys)ys.textContent='YAMNet lieferte keine auswertbaren Frames.';
-      clearYamnetCanvas();return;
-    }
-    var mean=initYamnetAccumulator();
-    timeline.forEach(function(row){Object.keys(mean).forEach(function(k){mean[k]+=row[k]||0;});});
-    Object.keys(mean).forEach(function(k){mean[k]/=timeline.length;});
-    var topGroups=Object.entries(mean).sort(function(a,b){return b[1]-a[1];}).slice(0,5);
-    var topEvents=Object.entries(topLabels).sort(function(a,b){return b[1]-a[1];}).slice(0,4);
-    if(ys)ys.innerHTML='<span style="color:#7ab8f5">Gruppen:</span> '+topGroups.map(function(x){return x[0]+' '+(x[1]*100).toFixed(0)+'%';}).join(' · ')+'<br><span style="color:#7ab8f5">Top-Events:</span> '+(topEvents.length?topEvents.map(function(x){return x[0]+' '+(x[1]/timeline.length*100).toFixed(0)+'%';}).join(' · '):'—');
-    window._chartData.yamnet={timeline:timeline,duration:buf.duration,groups:Object.keys(YAMNET_GROUPS),mean:mean,topLabels:topLabels};
-    document.getElementById('yamnet-section').style.display='block';
-    yamnetInitControls();
-    drawYamnetTimeline(timeline,buf.duration,Object.keys(YAMNET_GROUPS));
-  }catch(e){
-    console.error('YAMNet error',e);
-    var ys=document.getElementById('yamnet-summary');
-    if(ys)ys.textContent='YAMNet-Fehler: '+e.message;
-    clearYamnetCanvas();
-  }
-}
-
-function drawYamnetTimeline(timeline,duration,groups){
-  var c=document.getElementById('yamnet-canvas');
-  if(!c||!timeline||!timeline.length)return;
-  // use active groups from checkboxes
-  var activeGroups=yamnetGetActiveGroups();
-  var labels=activeGroups.length?activeGroups:(groups&&groups.length?groups:Object.keys(YAMNET_GROUPS));
-  var rowH=yamnetGetRowHeight();
-  var boost=yamnetGetBoost();
-  var h=Math.max(60,labels.length*rowH);
-  c.style.height=h+'px';
-  var dpr=devicePixelRatio||1;
-  var w=c.clientWidth||c.offsetWidth||800;
-  c.width=w*dpr;c.height=h*dpr;
-  var ctx=c.getContext('2d');
-  ctx.setTransform(dpr,0,0,dpr,0,0);
-  ctx.clearRect(0,0,w,h);
-  var view=getView?getView():{start:0,end:1};
-  var s=Math.max(0,Math.floor(view.start*timeline.length));
-  var e=Math.min(timeline.length,Math.max(s+1,Math.ceil(view.end*timeline.length)));
-  var slice=timeline.slice(s,e);
-  var colW=Math.max(1,w/slice.length+0.6);
-  for(var r=0;r<labels.length;r++){
-    var key=labels[r];
-    var y=r*rowH;
-    // row background
-    ctx.fillStyle=r%2===0?'rgba(255,255,255,0.02)':'rgba(0,0,0,0.15)';
-    ctx.fillRect(0,y,w,rowH-1);
-    // data
-    for(var i=0;i<slice.length;i++){
-      var val=Math.min(1,Math.max(0,(slice[i][key]||0)*boost));
-      if(val<0.05)continue;
-      var x=i/slice.length*w;
-      var alpha=Math.min(0.97,0.1+val*0.87);
-      ctx.fillStyle='rgba(122,184,245,'+alpha.toFixed(3)+')';
-      ctx.fillRect(x,y,colW,rowH-1);
-    }
-    // label background + text
-    ctx.fillStyle='rgba(0,0,0,0.55)';ctx.fillRect(0,y,80,rowH-1);
-    ctx.fillStyle='#9aa6b2';ctx.font='10px system-ui';
-    ctx.fillText(key.replace(/_/g,' '),3,y+rowH-4);
-  }
-  markReady('yamnet-canvas');
-  drawTimeAxis(ctx,w,h,duration);
-
-  // update raw events panel
-  var rawEl=document.getElementById('yn-raw-events');
-  if(rawEl&&window._chartData&&window._chartData.yamnet&&window._chartData.yamnet.topLabels){
-    var tl=window._chartData.yamnet.topLabels;
-    var thr=YAMNET_CFG.minScore;
-    var entries=Object.entries(tl)
-      .filter(function(x){return x[1]>0;})
-      .sort(function(a,b){return b[1]-a[1];})
-      .slice(0,30);
-    rawEl.innerHTML=entries.map(function(x){
-      var score=(x[1]/((window._chartData.yamnet.timeline||[]).length||1)*100).toFixed(1);
-      return '<span style="display:inline-block;margin-right:10px;margin-bottom:2px">'+
-        x[0]+' <span style="color:#7ab8f5">'+score+'%</span></span>';
-    }).join('');
-  }
-}
-
-function yamnetInitControls(){
-  var wrap=document.getElementById('yn-group-checks');
-  if(!wrap)return;
-  wrap.innerHTML='';
-  Object.keys(YAMNET_GROUPS).forEach(function(k){
-    var label=document.createElement('label');
-    label.style.cssText='font-size:11px;color:#aaa;display:flex;align-items:center;gap:4px;cursor:pointer';
-    var cb=document.createElement('input');
-    cb.type='checkbox';cb.id='yn-grp-'+k;cb.checked=true;
-    cb.style.accentColor='#7ab8f5';
-    cb.onchange=function(){yamnetRedraw();};
-    label.appendChild(cb);
-    label.appendChild(document.createTextNode(k.replace(/_/g,' ')));
-    wrap.appendChild(label);
-  });
-  document.getElementById('yamnet-controls').style.display='block';
-}
-
-function yamnetUpdateControls(){
-  var thr=document.getElementById('yn-threshold');
-  var rh=document.getElementById('yn-rowheight');
-  var boost=document.getElementById('yn-boost');
-  if(thr){
-    var v=parseInt(thr.value)/100;
-    YAMNET_CFG.minScore=v;
-    document.getElementById('yn-threshold-lbl').textContent=v.toFixed(2);
-  }
-  if(rh) document.getElementById('yn-rowheight-lbl').textContent=rh.value;
-  if(boost) document.getElementById('yn-boost-lbl').textContent=boost.value+'x';
-  yamnetRedraw();
-}
-
-function yamnetRedraw(){
-  if(!window._chartData||!window._chartData.yamnet)return;
-  var d=window._chartData.yamnet;
-  drawYamnetTimeline(d.timeline,d.duration,d.groups);
-}
-
-function yamnetGetActiveGroups(){
-  var active=[];
-  Object.keys(YAMNET_GROUPS).forEach(function(k){
-    var cb=document.getElementById('yn-grp-'+k);
-    if(!cb||cb.checked)active.push(k);
-  });
-  return active;
-}
-
-function yamnetGetBoost(){
-  var el=document.getElementById('yn-boost');
-  return el?parseInt(el.value):5;
-}
-
-function yamnetGetRowHeight(){
-  var el=document.getElementById('yn-rowheight');
-  return el?parseInt(el.value):17;
-}
-
-// ===== END YAMNET =====
 
 
 // ===== ESSENTIA MTG INSTRUMENT RECOGNITION (ONNX) =====
@@ -1180,10 +575,10 @@ function drawEssentiaTimeline(timeline,duration){
   var c=document.getElementById('essentia-canvas');
   if(!c||!timeline||!timeline.length)return;
   var dpr=devicePixelRatio||1;
-  var w=c.clientWidth||c.offsetWidth||800;
   var rowH=14;
   var h=ESSENTIA_CLASSES.length*rowH;
   c.style.height=h+'px';
+  var w=c.clientWidth||c.offsetWidth||820;
   c.width=w*dpr;c.height=h*dpr;
   var ctx=c.getContext('2d');
   ctx.setTransform(dpr,0,0,dpr,0,0);
@@ -1431,7 +826,6 @@ function redrawAllCharts(){
     if(d.fft.tilt)drawTiltCurve(d.fft.tilt,d.fft.dur);
     if(d.fft.harmDens)drawCurve('harmdense-canvas',d.fft.harmDens,'#aaaaaa',70,d.fft.dur,function(ctx,w,h){[{v:0,l:'0'},{v:4,l:'4'},{v:8,l:'8'},{v:12,l:'12'},{v:16,l:'16'}].forEach(function(r){var y=h-(r.v/16)*h*0.88-h*0.06;ctx.fillStyle='rgba(255,255,255,0.06)';ctx.fillRect(0,Math.round(y),w,1);ctx.font='8px system-ui';ctx.fillStyle='rgba(255,255,255,0.35)';ctx.fillText(r.l,3,Math.round(y)-2);});},0,16);
   }
-  if(d.yamnet)drawYamnetTimeline(d.yamnet.timeline,d.yamnet.duration);
   if(d.essentia)drawEssentiaTimeline(d.essentia.timeline,d.essentia.duration);
 }
 
@@ -1549,7 +943,7 @@ async function analyzeFile(input){
   if(window._activeWorker){window._activeWorker.terminate();window._activeWorker=null;}
   window._chartData={};
   window._attackComputed=false;
-  songDuration=0;zoomLevel=1;viewStart=0;viewEnd=1;window._spectroPerc=null;window._stereoP95=null;window._yamnetRunning=false;window._essentiaRunning=false;
+  songDuration=0;zoomLevel=1;viewStart=0;viewEnd=1;window._spectroPerc=null;window._stereoP95=null;window._essentiaRunning=false;
   document.getElementById('zoom-slider').value=0;
   document.getElementById('zoom-label').textContent='1×';
   if(window._animFrame){cancelAnimationFrame(window._animFrame);window._animFrame=null;}
@@ -1598,7 +992,6 @@ async function analyzeFile(input){
     document.getElementById('v-dur').textContent=fmt(buf.duration);
     setProgress(30);setStatus('Starte Analyse…');
     startWorkerAnalysis(buf);
-    runYamnet(buf);
     runEssentia(buf);
   }catch(e){
     setStatus('Fehler: '+e.message);
@@ -1615,7 +1008,7 @@ async function analyze(){
   var dlBtn=document.getElementById('dl-btn');if(dlBtn)dlBtn.style.display='none';
   window._chartData={};
   window._attackComputed=false;
-  songDuration=0;zoomLevel=1;viewStart=0;viewEnd=1;window._spectroPerc=null;window._stereoP95=null;window._yamnetRunning=false;window._essentiaRunning=false;
+  songDuration=0;zoomLevel=1;viewStart=0;viewEnd=1;window._spectroPerc=null;window._stereoP95=null;window._essentiaRunning=false;
   document.getElementById('zoom-slider').value=0;
   document.getElementById('zoom-label').textContent='1×';
   if(window._animFrame){cancelAnimationFrame(window._animFrame);window._animFrame=null;}
@@ -1719,7 +1112,6 @@ async function analyze(){
     document.getElementById('v-dur').textContent=fmt(buf.duration);
     setProgress(30);setStatus('Starte Analyse…');
     startWorkerAnalysis(buf);
-    runYamnet(buf);
     runEssentia(buf);
     drawSpectrum(buf,'freq-canvas');
   }catch(e){setStatus('Fehler: '+e.message);}
