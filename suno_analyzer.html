@@ -47,7 +47,7 @@ audio{width:100%;border-radius:8px;margin:8px 0;accent-color:#7ab8f5}
 <script src="https://cdn.jsdelivr.net/npm/onnxruntime-web@1.18.0/dist/ort.min.js"></script>
 </head>
 <body>
-<h1>Suno Audio Analyzer <span style="font-size:10px;color:#444;font-weight:400">v3.5 · Essentia+Demucs</span></h1>
+<h1>Suno Audio Analyzer <span style="font-size:10px;color:#444;font-weight:400">v3.6 · Essentia+Demucs</span></h1>
 <div id="tt"></div>
 
 <div class="section">
@@ -1543,7 +1543,15 @@ updatePlayheads();
 
 async function fetchMeta(uuid){
   try{
-    var r=await fetch('https://suno.com/song/'+uuid);
+    // Nutze lokalen Proxy wenn verfügbar (GitHub Pages CORS-Workaround)
+    var sunoUrl='https://suno.com/song/'+uuid;
+    var proxyUrl=DEMUCS_URL+'/proxy?url='+encodeURIComponent(sunoUrl);
+    var r;
+    try{
+      var proxyTest=await fetch(proxyUrl,{signal:AbortSignal.timeout(3000)});
+      if(proxyTest.ok){r=proxyTest;}
+    }catch(e){}
+    if(!r)r=await fetch(sunoUrl);
     var html=await r.text();
     var res={title:'',author:'',artwork:'',tags:[],plays:null,likes:null,comments:null,created_at:'',model:'',lyrics:'',prompt:''};
     var tm=html.match(/<title>([^<|]+)/);if(tm)res.title=tm[1].trim();

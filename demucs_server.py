@@ -51,6 +51,30 @@ def set_config():
     except Exception as e:
         return jsonify({'error': str(e)}), 500
 
+@app.route('/proxy', methods=['GET'])
+def proxy():
+    """Holt externe URLs für den Browser — umgeht CORS."""
+    import urllib.request
+    url = request.args.get('url','')
+    if not url:
+        return jsonify({'error': 'Keine URL'}), 400
+    # Nur Suno erlauben
+    if 'suno.com' not in url:
+        return jsonify({'error': 'Nur suno.com erlaubt'}), 403
+    try:
+        req = urllib.request.Request(url, headers={
+            'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36',
+            'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
+            'Accept-Language': 'en-US,en;q=0.5',
+        })
+        with urllib.request.urlopen(req, timeout=15) as r:
+            content_type = r.headers.get('Content-Type', 'text/html')
+            body = r.read().decode('utf-8', errors='replace')
+        from flask import Response
+        return Response(body, content_type=content_type)
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
+
 @app.route('/shutdown', methods=['POST', 'GET'])
 def shutdown():
     """Watchdog bemerkt den Ausfall und startet mit neuer Config neu."""
