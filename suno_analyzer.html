@@ -47,7 +47,7 @@ audio{width:100%;border-radius:8px;margin:8px 0;accent-color:#7ab8f5}
 <script src="https://cdn.jsdelivr.net/npm/onnxruntime-web@1.18.0/dist/ort.min.js"></script>
 </head>
 <body>
-<h1>Suno Audio Analyzer <span style="font-size:10px;color:#444;font-weight:400">v3.2 · Essentia+Demucs</span></h1>
+<h1>Suno Audio Analyzer <span style="font-size:10px;color:#444;font-weight:400">v3.3 · Essentia+Demucs</span></h1>
 <div id="tt"></div>
 
 <div class="section">
@@ -883,21 +883,23 @@ async function buildStemPlayers(stems,names){
     +'<span id="stems-cur-time" style="font-size:10px;color:#555;min-width:36px">0:00</span>'
     +'<span style="font-size:10px;color:#333">/ '+fmt(dur)+'</span>'
     +'</div>'
-    // Waveform rows
+    // Waveform rows — mute button and download float over canvas
     +names.filter(function(n){return _stemBuffers[n];}).map(function(name){
       var col=_stemColors[name]||'#888';
       var lbl=_stemLabels[name]||name;
       var dlUrl='data:audio/mpeg;base64,'+stems[name];
-      return '<div style="margin-bottom:4px">'
-        +'<div style="display:flex;align-items:center;gap:6px;margin-bottom:2px">'
-        +'<button id="stem-mute-'+name+'" onclick="stemToggleMute(\''+name+'\')" '
-        +'style="min-width:52px;height:20px;border-radius:3px;border:1px solid '+col+'55;'
-        +'background:#111;color:'+col+';font-size:10px;cursor:pointer">'+lbl+'</button>'
-        +'<a href="'+dlUrl+'" download="'+name+'.mp3" style="font-size:9px;color:#333;text-decoration:none;padding:1px 5px;border:1px solid #222;border-radius:2px">↓</a>'
-        +'</div>'
-        +'<div class="chart-outer" style="height:40px;cursor:pointer" onclick="stemSeekClick(event,this)">'
-        +'<canvas id="stem-canvas-'+name+'" style="height:40px;background:#0d0d0d"></canvas>'
+      return '<div style="margin-bottom:3px">'
+        +'<div class="chart-outer" style="height:44px;cursor:pointer" onclick="stemSeekClick(event,this)">'
+        +'<canvas id="stem-canvas-'+name+'" style="height:44px;background:#0a0a0a"></canvas>'
         +'<div class="playhead" id="ph-stem-'+name+'"></div>'
+        +'<button id="stem-mute-'+name+'" onclick="event.stopPropagation();stemToggleMute(\''+name+'\')" '
+        +'style="position:absolute;left:0;top:0;height:100%;min-width:58px;border:none;'
+        +'border-right:1px solid '+col+'44;background:'+col+'33;color:'+col+';'
+        +'font-size:10px;font-weight:600;cursor:pointer;letter-spacing:0.5px">'+lbl+'</button>'
+        +'<a href="'+dlUrl+'" download="'+name+'.mp3" onclick="event.stopPropagation()" '
+        +'style="position:absolute;right:0;top:0;height:100%;width:28px;display:flex;'
+        +'align-items:center;justify-content:center;border-left:1px solid #1a1a1a;'
+        +'background:#0d0d0d;color:#555;font-size:12px;text-decoration:none">↓</a>'
         +'</div>'
         +'</div>';
     }).join('')
@@ -952,7 +954,7 @@ function drawStemWaveform(name,buf){
     ctx.lineTo(i,mid+max*mid*0.9);
   }
   ctx.closePath();
-  ctx.fillStyle=col+'55';
+  ctx.fillStyle=col+'cc';
   ctx.fill();
 
   // Center line
