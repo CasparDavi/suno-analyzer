@@ -1432,6 +1432,7 @@ function redrawAllCharts(){
     if(d.fft.harmDens)drawCurve('harmdense-canvas',d.fft.harmDens,'#aaaaaa',70,d.fft.dur,function(ctx,w,h){[{v:0,l:'0'},{v:4,l:'4'},{v:8,l:'8'},{v:12,l:'12'},{v:16,l:'16'}].forEach(function(r){var y=h-(r.v/16)*h*0.88-h*0.06;ctx.fillStyle='rgba(255,255,255,0.06)';ctx.fillRect(0,Math.round(y),w,1);ctx.font='8px system-ui';ctx.fillStyle='rgba(255,255,255,0.35)';ctx.fillText(r.l,3,Math.round(y)-2);});},0,16);
   }
   if(d.yamnet)drawYamnetTimeline(d.yamnet.timeline,d.yamnet.duration);
+  if(d.essentia)drawEssentiaTimeline(d.essentia.timeline,d.essentia.duration);
 }
 
 // store all chart data for redraw
