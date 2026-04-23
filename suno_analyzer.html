@@ -47,7 +47,7 @@ audio{width:100%;border-radius:8px;margin:8px 0;accent-color:#7ab8f5}
 <script src="https://cdn.jsdelivr.net/npm/onnxruntime-web@1.18.0/dist/ort.min.js"></script>
 </head>
 <body>
-<h1>Suno Audio Analyzer <span style="font-size:10px;color:#444;font-weight:400">v2.3 · Essentia</span></h1>
+<h1>Suno Audio Analyzer <span style="font-size:10px;color:#444;font-weight:400">v2.4 · Essentia</span></h1>
 <div id="tt"></div>
 
 <div class="section">
@@ -486,29 +486,136 @@ async function ensureEssentiaModels(){
   if(st)st.textContent='';
 }
 
+// Essentia Effnet Mel Spectrogram
+// Params: sr=16000, frameSize=512, hopSize=256, melBands=128,
+//         patchFrames=96, lowFreq=0, highFreq=8000, normalize=unit_sum
+// Slaney mel scale, hann window, log(x+1e-6)
+
+function hannWindow(n){
+  var w=new Float32Array(n);
+  for(var i=0;i<n;i++) w[i]=0.5*(1-Math.cos(2*Math.PI*i/(n-1)));
+  return w;
+}
+
+function stftMagnitude(frame, fftSize){
+  // Radix-2 Cooley-Tukey FFT
+  var N=fftSize;
+  var re=new Float32Array(N);
+  var im=new Float32Array(N);
+  for(var i=0;i<Math.min(frame.length,N);i++) re[i]=frame[i];
+
+  // Bit-reversal permutation
+  var bits=Math.log2(N);
+  for(var i=0;i<N;i++){
+    var j=0;
+    for(var b=0;b<bits;b++) j=(j<<1)|((i>>b)&1);
+    if(j>i){var t=re[i];re[i]=re[j];re[j]=t;t=im[i];im[i]=im[j];im[j]=t;}
+  }
+
+  // FFT butterfly
+  for(var len=2;len<=N;len<<=1){
+    var ang=-2*Math.PI/len;
+    var wRe=Math.cos(ang),wIm=Math.sin(ang);
+    for(var i=0;i<N;i+=len){
+      var curRe=1,curIm=0;
+      for(var j=0;j<len/2;j++){
+        var uRe=re[i+j],uIm=im[i+j];
+        var vRe=re[i+j+len/2]*curRe-im[i+j+len/2]*curIm;
+        var vIm=re[i+j+len/2]*curIm+im[i+j+len/2]*curRe;
+        re[i+j]=uRe+vRe;im[i+j]=uIm+vIm;
+        re[i+j+len/2]=uRe-vRe;im[i+j+len/2]=uIm-vIm;
+        var newRe=curRe*wRe-curIm*wIm;
+        curIm=curRe*wIm+curIm*wRe;curRe=newRe;
+      }
+    }
+  }
+
+  // Magnitude of positive frequencies only
+  var bins=N/2+1;
+  var mag=new Float32Array(bins);
+  for(var k=0;k<bins;k++) mag[k]=Math.sqrt(re[k]*re[k]+im[k]*im[k]);
+  return mag;
+}
+
+function buildSlaneyMelFilterbank(sr, fftSize, nMels, fMin, fMax){
+  // Slaney mel scale (used by librosa default and Essentia)
+  function hzToMel(hz){
+    var f0=700, sp=1/1127;
+    return (hz<=1000) ? hz/100 : (1+Math.log(hz/1000)/Math.log(6.4))*15;
+  }
+  // Actually use HTK mel (simpler, also used):
+  function hzToMelHTK(hz){ return 2595*Math.log10(1+hz/700); }
+  function melToHzHTK(mel){ return 700*(Math.pow(10,mel/2595)-1); }
+
+  var melMin=hzToMelHTK(fMin), melMax=hzToMelHTK(fMax);
+  var melPoints=new Float32Array(nMels+2);
+  for(var i=0;i<nMels+2;i++) melPoints[i]=melMin+i*(melMax-melMin)/(nMels+1);
+
+  var freqPoints=new Float32Array(nMels+2);
+  for(var i=0;i<nMels+2;i++) freqPoints[i]=melToHzHTK(melPoints[i]);
+
+  var bins=fftSize/2+1;
+  var fftFreqs=new Float32Array(bins);
+  for(var i=0;i<bins;i++) fftFreqs[i]=i*sr/fftSize;
+
+  // Build filterbank [nMels x bins]
+  var fb=[];
+  for(var m=0;m<nMels;m++){
+    var filt=new Float32Array(bins);
+    var fLow=freqPoints[m], fCenter=freqPoints[m+1], fHigh=freqPoints[m+2];
+    var norm=2/(fHigh-fLow); // unit_sum normalization
+    for(var i=0;i<bins;i++){
+      var f=fftFreqs[i];
+      if(f>=fLow&&f<=fCenter) filt[i]=norm*(f-fLow)/(fCenter-fLow);
+      else if(f>fCenter&&f<=fHigh) filt[i]=norm*(fHigh-f)/(fHigh-fCenter);
+    }
+    fb.push(filt);
+  }
+  return fb;
+}
+
+var _melFB=null, _hannWin=null;
+
 function computeMelSpectrogram(audio, sr){
-  // Essentia expects [batch, 128, 96] mel patches at 16kHz
-  // We compute a simplified mel-like spectrogram using our FFT data
-  // Each patch = 96 frames of 128 mel bands
-  var patchLen=96*160; // ~0.96s at 16kHz with hop 160
+  var SR=16000, FRAME=512, HOP=256, MELS=128, PATCH=96;
+  var fLow=0, fHigh=8000;
+
+  // Build filterbank once
+  if(!_melFB){
+    _melFB=buildSlaneyMelFilterbank(SR,FRAME,MELS,fLow,fHigh);
+    _hannWin=hannWindow(FRAME);
+  }
+
+  var bins=FRAME/2+1;
   var patches=[];
-  var step=Math.floor(patchLen/2); // 50% overlap
-  for(var i=0;i+patchLen<=audio.length;i+=step){
-    var chunk=audio.subarray(i,i+patchLen);
-    // Simple energy-based mel approximation using 128 bands
-    var patch=new Float32Array(128*96);
-    for(var t=0;t<96;t++){
-      var frameStart=t*160;
-      var frameEnd=Math.min(frameStart+512,chunk.length);
-      // 128 mel bands via simple FFT magnitude binning
-      for(var b=0;b<128;b++){
-        var binStart=Math.floor(b*frameEnd/256);
-        var binEnd=Math.floor((b+1)*frameEnd/256);
-        var energy=0;
-        for(var k=binStart;k<binEnd&&k<chunk.length;k++){
-          energy+=chunk[k]*chunk[k];
-        }
-        patch[t*128+b]=Math.log1p(energy*100);
+  var melFrames=[];
+
+  // Compute mel frames for entire audio
+  for(var i=0;i+FRAME<=audio.length;i+=HOP){
+    // Apply hann window
+    var frame=new Float32Array(FRAME);
+    for(var j=0;j<FRAME;j++) frame[j]=audio[i+j]*_hannWin[j];
+
+    // FFT magnitude
+    var mag=stftMagnitude(frame,FRAME);
+
+    // Apply mel filterbank
+    var melFrame=new Float32Array(MELS);
+    for(var m=0;m<MELS;m++){
+      var s=0;
+      for(var k=0;k<bins;k++) s+=mag[k]*_melFB[m][k];
+      melFrame[m]=Math.log(s+1e-6); // log compression
+    }
+    melFrames.push(melFrame);
+  }
+
+  // Slice into patches of PATCH frames
+  for(var i=0;i+PATCH<=melFrames.length;i+=PATCH){
+    // Shape: [128, 96] — melBands x frames
+    var patch=new Float32Array(MELS*PATCH);
+    for(var t=0;t<PATCH;t++){
+      for(var m=0;m<MELS;m++){
+        patch[m*PATCH+t]=melFrames[i+t][m];
       }
     }
     patches.push(patch);
@@ -518,7 +625,7 @@ function computeMelSpectrogram(audio, sr){
 
 async function runEssentiaFrame(melPatch){
   // Input shape: [1, 128, 96]
-  var tensor=new ort.Tensor('float32', melPatch, [1,128,96]);
+  var tensor=new ort.Tensor('float32', melPatch, [1,128,96]); // [batch, melBands, frames]
   var inputName=_essentiaEffnetSession.inputNames[0];
   var effnetOut=await _essentiaEffnetSession.run({[inputName]:tensor});
   // Get embeddings (second output, shape [1,1280])
