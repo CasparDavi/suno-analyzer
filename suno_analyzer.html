@@ -38,7 +38,7 @@ audio{width:100%;border-radius:8px;margin:8px 0;accent-color:#7ab8f5}
 .playhead{position:absolute;top:0;bottom:0;width:1px;background:rgba(255,255,255,0.55);pointer-events:none;display:none}
 #struct-wrap{position:relative;height:16px;border-radius:4px;overflow:hidden;display:flex;margin-bottom:4px}
 .chart-pending{display:flex;align-items:center;justify-content:center;font-size:11px;color:#444;border-radius:4px;background:#0a0a0a;position:relative;overflow:hidden}
-.chart-pending::after{content:'';position:absolute;inset:0;background:linear-gradient(90deg,transparent 0%,rgba(255,255,255,0.03) 50%,transparent 100%);animation:skeleton-pulse 1.8s ease-in-out infinite;transform:translateX(-100%)}
+.chart-pending::after{content:'';position:absolute;inset:0;background:linear-gradient(90deg,transparent 0%,rgba(255,255,255,0.03) 50%,transparent 100%);animation:skeleton-pulse 1.8s ease-in-out infinite;transform:translateX(-100%);pointer-events:none}
 @keyframes skeleton-pulse{0%{transform:translateX(-100%)}100%{transform:translateX(100%)}}
 .chart-ready::after{display:none}
 .section-status{font-size:9px;color:#444;margin-left:8px;vertical-align:middle}
@@ -47,7 +47,7 @@ audio{width:100%;border-radius:8px;margin:8px 0;accent-color:#7ab8f5}
 <script src="https://cdn.jsdelivr.net/npm/onnxruntime-web@1.18.0/dist/ort.min.js"></script>
 </head>
 <body>
-<h1>Suno Audio Analyzer <span style="font-size:10px;color:#444;font-weight:400">v2.7 · Essentia</span></h1>
+<h1>Suno Audio Analyzer <span style="font-size:10px;color:#444;font-weight:400">v2.8 · Essentia</span></h1>
 <div id="tt"></div>
 
 <div class="section">
@@ -187,7 +187,7 @@ audio{width:100%;border-radius:8px;margin:8px 0;accent-color:#7ab8f5}
     </span>
   </div>
   <div id="essentia-summary" style="font-size:11px;color:#888;margin:4px 0 6px;min-height:16px">Essentia noch nicht geladen.</div>
-  <div class="chart-outer" style="height:560px">
+  <div class="chart-outer" style="height:160px">
     <canvas id="essentia-canvas" style="height:160px;background:#0a0a0a" class="chart-pending">berechne...</canvas>
     <div class="playhead" id="ph-essentia"></div>
   </div>
