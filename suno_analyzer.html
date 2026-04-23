@@ -47,7 +47,7 @@ audio{width:100%;border-radius:8px;margin:8px 0;accent-color:#7ab8f5}
 <script src="https://cdn.jsdelivr.net/npm/onnxruntime-web@1.18.0/dist/ort.min.js"></script>
 </head>
 <body>
-<h1>Suno Audio Analyzer <span style="font-size:10px;color:#444;font-weight:400">v3.3 · Essentia+Demucs</span></h1>
+<h1>Suno Audio Analyzer <span style="font-size:10px;color:#444;font-weight:400">v3.4 · Essentia+Demucs</span></h1>
 <div id="tt"></div>
 
 <div class="section">
@@ -200,17 +200,53 @@ audio{width:100%;border-radius:8px;margin:8px 0;accent-color:#7ab8f5}
       <span id="stems-server-status" style="font-size:10px;color:#555">· prüfe Server...</span>
     </span>
   </div>
-  <div id="stems-unavailable" style="font-size:11px;color:#555;margin:4px 0">
-    Server nicht verfügbar — starte: <code style="color:#7ab8f5;font-size:10px">source ~/demucs-env/bin/activate && python3 ~/demucs_server.py</code>
+  <div id="stems-unavailable" style="font-size:11px;color:#555;margin:4px 0 8px">
+    Server nicht verfügbar — starte:<br>
+    <code style="color:#7ab8f5;font-size:10px">bash ~/demucs_watchdog.sh</code>
+    <span style="color:#444;font-size:10px"> oder </span>
+    <code style="color:#7ab8f5;font-size:10px">source ~/demucs-env/bin/activate &amp;&amp; python3 ~/demucs_server.py</code>
   </div>
   <div id="stems-ui" style="display:none">
-    <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin-bottom:8px">
-      <button id="stems-btn" onclick="runStems()" style="padding:6px 14px;font-size:12px;border:1px solid transparent;border-radius:6px;background:#1a3a5c;color:#7ab8f5;cursor:pointer">
+    <!-- Settings row -->
+    <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin-bottom:8px;padding:6px 8px;background:#0d0d0d;border-radius:6px">
+      <div style="display:flex;align-items:center;gap:5px">
+        <span style="font-size:10px;color:#555">Modell</span>
+        <select id="stems-model" onchange="stemsConfigChanged()" style="background:#111;color:#aaa;border:1px solid #333;border-radius:3px;font-size:10px;padding:2px 4px">
+          <option value="htdemucs">htdemucs (4 Stems)</option>
+          <option value="htdemucs_ft">htdemucs_ft (4 Stems, besser)</option>
+          <option value="htdemucs_6s">htdemucs_6s (6 Stems)</option>
+          <option value="mdx_extra">mdx_extra (4 Stems, Vocals++)</option>
+        </select>
+      </div>
+      <div style="display:flex;align-items:center;gap:5px">
+        <span style="font-size:10px;color:#555">Shifts</span>
+        <select id="stems-shifts" onchange="stemsConfigChanged()" style="background:#111;color:#aaa;border:1px solid #333;border-radius:3px;font-size:10px;padding:2px 4px">
+          <option value="0">0 (schnell)</option>
+          <option value="5">5 (besser)</option>
+          <option value="10">10 (langsam)</option>
+        </select>
+      </div>
+      <div style="display:flex;align-items:center;gap:5px">
+        <span style="font-size:10px;color:#555">Overlap</span>
+        <select id="stems-overlap" onchange="stemsConfigChanged()" style="background:#111;color:#aaa;border:1px solid #333;border-radius:3px;font-size:10px;padding:2px 4px">
+          <option value="0.25">0.25 (Standard)</option>
+          <option value="0.5">0.5</option>
+          <option value="0.75">0.75 (weniger Artefakte)</option>
+        </select>
+      </div>
+      <button id="stems-restart-btn" onclick="stemsRestart()" style="padding:3px 10px;font-size:10px;border:1px solid #555;border-radius:3px;background:#1a1a1a;color:#aaa;cursor:pointer;margin-left:auto">
+        ↺ Neu starten
+      </button>
+      <span id="stems-restart-status" style="font-size:10px;color:#555"></span>
+    </div>
+    <!-- Action row -->
+    <div style="display:flex;align-items:center;gap:8px;margin-bottom:8px">
+      <button id="stems-btn" onclick="runStems()" style="padding:6px 14px;font-size:12px;border:1px solid transparent;border-radius:4px;background:#1a3a5c;color:#7ab8f5;cursor:pointer">
         Stems trennen
       </button>
       <span id="stems-status" style="font-size:11px;color:#555"></span>
     </div>
-    <div id="stems-players" style="display:none"></div>
+    <div id="stems-players"></div>
   </div>
 </div>
 
@@ -807,6 +843,8 @@ async function checkDemucsServer(){
       if(statusEl){statusEl.textContent='· '+d.model+' ('+stemCount+' Stems)';statusEl.style.color='#3a7';}
       if(unavailEl)unavailEl.style.display='none';
       if(uiEl)uiEl.style.display='block';
+      stemsUpdateSelects(d);
+      showDummyStems(d.stems||['vocals','drums','bass','other']);
       return true;
     }
   }catch(e){}
@@ -1069,6 +1107,98 @@ function redrawStemWaveforms(){
 player.addEventListener('play',function(){
   if(_stemPlaying)stemStop();
 });
+
+function showDummyStems(names){
+  // Show empty waveform rows before Demucs runs
+  if(Object.keys(_stemBuffers).length)return; // already have real stems
+  var el=document.getElementById('stems-players');
+  if(!el||el.innerHTML)return;
+  var dur=songDuration||0;
+  el.innerHTML='<div style="background:#0a0a0a;border-radius:8px;padding:10px 12px;border:1px solid #1a1a1a">'
+    +'<div style="display:flex;align-items:center;gap:8px;margin-bottom:8px">'
+    +'<button id="stems-pp" onclick="stemTogglePlay()" style="width:28px;height:28px;background:#1a1a1a;border:1px solid #333;color:#aaa;font-size:12px;cursor:pointer;display:flex;align-items:center;justify-content:center">▶</button>'
+    +'<span id="stems-cur-time" style="font-size:10px;color:#555;min-width:36px">0:00</span>'
+    +'<span style="font-size:10px;color:#333">/ '+(dur?fmt(dur):'-:--')+'</span>'
+    +'</div>'
+    +names.map(function(name){
+      var col=_stemColors[name]||'#888';
+      var lbl=_stemLabels[name]||name;
+      return '<div style="margin-bottom:3px">'
+        +'<div class="chart-outer" style="height:44px">'
+        +'<canvas id="stem-canvas-'+name+'" style="height:44px;background:#0a0a0a"></canvas>'
+        +'<div class="playhead" id="ph-stem-'+name+'"></div>'
+        +'<button id="stem-mute-'+name+'" style="position:absolute;left:0;top:0;height:100%;min-width:58px;'
+        +'border:none;border-right:1px solid '+col+'44;background:'+col+'22;color:'+col+'55;'
+        +'font-size:10px;font-weight:600;cursor:default">'+lbl+'</button>'
+        +'<span style="position:absolute;right:0;top:0;height:100%;width:28px;display:flex;'
+        +'align-items:center;justify-content:center;border-left:1px solid #1a1a1a;'
+        +'background:#0d0d0d;color:#2a2a2a;font-size:12px">↓</span>'
+        +'</div></div>';
+    }).join('')
+    +'</div>';
+  _stemNames=names;
+}
+
+// Config management
+var _stemsConfigDirty=false;
+
+function stemsConfigChanged(){
+  _stemsConfigDirty=true;
+  var rs=document.getElementById('stems-restart-status');
+  if(rs)rs.textContent='· Config geändert — Neustart nötig';
+}
+
+async function stemsRestart(){
+  var model=document.getElementById('stems-model').value;
+  var shifts=parseInt(document.getElementById('stems-shifts').value);
+  var overlap=parseFloat(document.getElementById('stems-overlap').value);
+  var rs=document.getElementById('stems-restart-status');
+
+  // Write config via server endpoint
+  if(rs)rs.textContent='· schreibe Config...';
+  try{
+    var r=await fetch(DEMUCS_URL+'/config',{
+      method:'POST',
+      headers:{'Content-Type':'application/json'},
+      body:JSON.stringify({model:model,shifts:shifts,overlap:overlap,port:5001})
+    });
+    if(!r.ok)throw new Error('Config-Write fehlgeschlagen');
+  }catch(e){
+    // Config-Write via server nicht möglich — nur Shutdown
+  }
+
+  // Shutdown — Watchdog startet neu mit neuer Config
+  if(rs)rs.textContent='· fahre Server herunter...';
+  try{
+    await fetch(DEMUCS_URL+'/shutdown',{method:'POST',signal:AbortSignal.timeout(2000)});
+  }catch(e){} // Verbindungsabbruch ist erwartet
+
+  _stemsConfigDirty=false;
+  if(rs)rs.textContent='· warte auf Neustart...';
+
+  // Poll bis Server wieder da
+  var attempts=0;
+  var poll=setInterval(async function(){
+    attempts++;
+    if(attempts>30){clearInterval(poll);if(rs)rs.textContent='· Neustart-Timeout';return;}
+    var ok=await checkDemucsServer();
+    if(ok){
+      clearInterval(poll);
+      if(rs)rs.textContent='· neugestartet ✓';
+      setTimeout(function(){if(rs)rs.textContent='';},3000);
+    }
+  },2000);
+}
+
+function stemsUpdateSelects(serverData){
+  // Sync selects to current server config
+  var modelEl=document.getElementById('stems-model');
+  var shiftsEl=document.getElementById('stems-shifts');
+  var overlapEl=document.getElementById('stems-overlap');
+  if(modelEl&&serverData.model)modelEl.value=serverData.model;
+  if(shiftsEl&&serverData.shifts!==undefined)shiftsEl.value=String(serverData.shifts);
+  if(overlapEl&&serverData.overlap!==undefined)overlapEl.value=String(serverData.overlap);
+}
 
 // Check server on load
 setTimeout(checkDemucsServer,1000);

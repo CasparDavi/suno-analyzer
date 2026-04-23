@@ -1,17 +1,26 @@
 #!/usr/bin/env python3
 """
 Demucs Stem Separation Server
-Startet mit: source ~/demucs-env/bin/activate && python3 demucs_server.py
-Läuft auf: http://localhost:5001
+Wird normalerweise vom Watchdog gestartet — nicht direkt aufrufen.
+Direkt starten: source ~/demucs-env/bin/activate && python3 demucs_server.py [Optionen]
 """
 
-from flask import Flask, request, jsonify, send_file
-import tempfile, os, subprocess, io, json
-import numpy as np
+import argparse, base64, json, os, signal, subprocess, sys, tempfile
+from flask import Flask, request, jsonify
+
+parser = argparse.ArgumentParser()
+parser.add_argument('--model', default='htdemucs',
+    choices=['htdemucs','htdemucs_ft','htdemucs_6s','mdx_extra','mdx_extra_q'])
+parser.add_argument('--shifts', type=int, default=0)
+parser.add_argument('--overlap', type=float, default=0.25)
+parser.add_argument('--port', type=int, default=5001)
+args = parser.parse_args()
+
+STEMS_4 = ['vocals','drums','bass','other']
+STEMS_6 = ['vocals','drums','bass','guitar','piano','other']
 
 app = Flask(__name__)
 
-# CORS für lokalen Analyzer erlauben
 @app.after_request
 def add_cors(r):
     r.headers['Access-Control-Allow-Origin'] = '*'
@@ -21,13 +30,25 @@ def add_cors(r):
 
 @app.route('/status', methods=['GET'])
 def status():
-    return jsonify({'status': 'ok', 'model': 'htdemucs'})
+    stem_names = STEMS_6 if args.model == 'htdemucs_6s' else STEMS_4
+    return jsonify({
+        'status': 'ok',
+        'model': args.model,
+        'stems': stem_names,
+        'shifts': args.shifts,
+        'overlap': args.overlap
+    })
+
+@app.route('/shutdown', methods=['POST', 'GET'])
+def shutdown():
+    """Watchdog bemerkt den Ausfall und startet mit neuer Config neu."""
+    os.kill(os.getpid(), signal.SIGTERM)
+    return jsonify({'status': 'shutting down'})
 
 @app.route('/separate', methods=['POST', 'OPTIONS'])
 def separate():
     if request.method == 'OPTIONS':
         return '', 204
-
     if 'audio' not in request.files:
         return jsonify({'error': 'Keine Audio-Datei'}), 400
 
@@ -35,49 +56,49 @@ def separate():
     suffix = '.mp3' if audio_file.filename.endswith('.mp3') else '.wav'
 
     with tempfile.TemporaryDirectory() as tmpdir:
-        # Audio speichern
         input_path = os.path.join(tmpdir, 'input' + suffix)
         audio_file.save(input_path)
 
-        # Demucs ausführen
-        try:
-            result = subprocess.run([
-                'python3', '-m', 'demucs',
-                '--name', 'htdemucs',
-                '--out', tmpdir,
-                '--mp3',
-                input_path
-            ], capture_output=True, text=True, timeout=300)
+        cmd = [
+            sys.executable, '-m', 'demucs',
+            '--name', args.model,
+            '--out', tmpdir,
+            '--mp3',
+            '--overlap', str(args.overlap),
+        ]
+        if args.shifts > 0:
+            cmd += ['--shifts', str(args.shifts)]
+        cmd.append(input_path)
 
+        try:
+            result = subprocess.run(cmd, capture_output=True, text=True, timeout=600)
             if result.returncode != 0:
                 return jsonify({'error': result.stderr[-500:]}), 500
-
         except subprocess.TimeoutExpired:
-            return jsonify({'error': 'Timeout — Song zu lang'}), 500
+            return jsonify({'error': 'Timeout'}), 500
 
-        # Stems einlesen
-        stems_dir = os.path.join(tmpdir, 'htdemucs', 'input')
+        stems_dir = os.path.join(tmpdir, args.model, 'input')
         if not os.path.exists(stems_dir):
-            # Fallback: Ordner suchen
             for root, dirs, files in os.walk(tmpdir):
                 if any(f.endswith('.mp3') for f in files):
                     stems_dir = root
                     break
 
+        stem_names = STEMS_6 if args.model == 'htdemucs_6s' else STEMS_4
         stems = {}
-        for stem_name in ['vocals', 'drums', 'bass', 'other']:
-            stem_path = os.path.join(stems_dir, stem_name + '.mp3')
-            if os.path.exists(stem_path):
-                with open(stem_path, 'rb') as f:
-                    import base64
-                    stems[stem_name] = base64.b64encode(f.read()).decode('utf-8')
+        for name in stem_names:
+            path = os.path.join(stems_dir, name + '.mp3')
+            if os.path.exists(path):
+                with open(path, 'rb') as f:
+                    stems[name] = base64.b64encode(f.read()).decode('utf-8')
 
         if not stems:
-            return jsonify({'error': 'Keine Stems gefunden', 'stderr': result.stderr[-200:]}), 500
+            return jsonify({'error': 'Keine Stems gefunden', 'debug': result.stderr[-300:]}), 500
 
-        return jsonify({'stems': stems, 'format': 'mp3'})
+        return jsonify({'stems': stems, 'model': args.model, 'stem_names': stem_names})
 
 if __name__ == '__main__':
-    print("Demucs Server läuft auf http://localhost:5001")
-    print("Stoppen mit Ctrl+C")
-    app.run(host='127.0.0.1', port=5001, debug=False)
+    stem_names = STEMS_6 if args.model == 'htdemucs_6s' else STEMS_4
+    print(f"Demucs Server · {args.model} · {stem_names}")
+    print(f"http://localhost:{args.port}")
+    app.run(host='127.0.0.1', port=args.port, debug=False)
