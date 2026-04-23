@@ -47,7 +47,7 @@ audio{width:100%;border-radius:8px;margin:8px 0;accent-color:#7ab8f5}
 <script src="https://cdn.jsdelivr.net/npm/onnxruntime-web@1.18.0/dist/ort.min.js"></script>
 </head>
 <body>
-<h1>Suno Audio Analyzer <span style="font-size:10px;color:#444;font-weight:400">v2.8 · Essentia</span></h1>
+<h1>Suno Audio Analyzer <span style="font-size:10px;color:#444;font-weight:400">v2.9 · Essentia+Demucs</span></h1>
 <div id="tt"></div>
 
 <div class="section">
@@ -190,6 +190,25 @@ audio{width:100%;border-radius:8px;margin:8px 0;accent-color:#7ab8f5}
   <div class="chart-outer" style="height:160px">
     <canvas id="essentia-canvas" style="height:160px;background:#0a0a0a" class="chart-pending">berechne...</canvas>
     <div class="playhead" id="ph-essentia"></div>
+  </div>
+</div>
+
+<div class="section" id="stems-section">
+  <div class="slbl">
+    <span>Stem-Trennung (Demucs lokal)</span>
+    <span style="display:flex;align-items:center;gap:8px">
+      <span id="stems-server-status" style="font-size:10px;color:#555">· prüfe Server...</span>
+    </span>
+  </div>
+  <div id="stems-unavailable" style="font-size:11px;color:#555;margin:4px 0">
+    Server nicht verfügbar — starte: <code style="color:#7ab8f5;font-size:10px">source ~/demucs-env/bin/activate && python3 ~/demucs_server.py</code>
+  </div>
+  <div id="stems-ui" style="display:none">
+    <button id="stems-btn" onclick="runStems()" style="padding:7px 16px;font-size:13px;border:1px solid transparent;border-radius:8px;background:#1a3a5c;color:#7ab8f5;cursor:pointer;margin-bottom:8px">
+      Stems trennen
+    </button>
+    <span id="stems-status" style="font-size:11px;color:#555;margin-left:10px"></span>
+    <div id="stems-players" style="display:none;margin-top:8px"></div>
   </div>
 </div>
 
@@ -753,6 +772,91 @@ function drawEssentiaTimeline(timeline,duration){
 }
 // ===== END ESSENTIA =====
 
+
+// ===== DEMUCS STEM SEPARATION =====
+var DEMUCS_URL='http://localhost:5001';
+var _stemsCache=null;
+
+async function checkDemucsServer(){
+  var statusEl=document.getElementById('stems-server-status');
+  var unavailEl=document.getElementById('stems-unavailable');
+  var uiEl=document.getElementById('stems-ui');
+  try{
+    var r=await fetch(DEMUCS_URL+'/status',{signal:AbortSignal.timeout(2000)});
+    if(r.ok){
+      if(statusEl)statusEl.textContent='· Server aktiv';
+      if(statusEl)statusEl.style.color='#3a7';
+      if(unavailEl)unavailEl.style.display='none';
+      if(uiEl)uiEl.style.display='block';
+      return true;
+    }
+  }catch(e){}
+  if(statusEl)statusEl.textContent='· Server nicht erreichbar';
+  if(statusEl)statusEl.style.color='#a55';
+  if(unavailEl)unavailEl.style.display='block';
+  if(uiEl)uiEl.style.display='none';
+  return false;
+}
+
+async function runStems(){
+  var btn=document.getElementById('stems-btn');
+  var st=document.getElementById('stems-status');
+  var playersEl=document.getElementById('stems-players');
+
+  // Get cached audio
+  var uuid=extractUUID(document.getElementById('url-input').value);
+  var useWav=document.getElementById('wav-toggle')&&document.getElementById('wav-toggle').checked;
+  var cacheKey=uuid+(useWav?'_wav':'_mp3');
+  var arrayBuf=mp3Cache[cacheKey];
+  if(!arrayBuf){st.textContent='Bitte zuerst analysieren';return;}
+
+  btn.disabled=true;
+  if(st)st.textContent='Sende Audio...';
+
+  try{
+    var blob=new Blob([arrayBuf],{type:useWav?'audio/wav':'audio/mpeg'});
+    var formData=new FormData();
+    formData.append('audio',blob,uuid+(useWav?'.wav':'.mp3'));
+
+    if(st)st.textContent='Demucs läuft... (kann 1-3 Min dauern)';
+    var r=await fetch(DEMUCS_URL+'/separate',{method:'POST',body:formData});
+    if(!r.ok){
+      var err=await r.json();
+      st.textContent='Fehler: '+(err.error||r.status);
+      btn.disabled=false;return;
+    }
+    var data=await r.json();
+    _stemsCache=data.stems;
+    renderStemsPlayers(data.stems);
+    if(st)st.textContent='Fertig';
+  }catch(e){
+    if(st)st.textContent='Fehler: '+e.message;
+  }
+  btn.disabled=false;
+}
+
+function renderStemsPlayers(stems){
+  var el=document.getElementById('stems-players');
+  if(!el)return;
+  el.style.display='block';
+  var colors={vocals:'#e07070',drums:'#70a0e0',bass:'#70c070',other:'#c0a050'};
+  var labels={vocals:'Gesang',drums:'Drums',bass:'Bass',other:'Rest'};
+  el.innerHTML=Object.keys(stems).map(function(name){
+    var url='data:audio/mpeg;base64,'+stems[name];
+    var col=colors[name]||'#888';
+    var lbl=labels[name]||name;
+    return '<div style="display:flex;align-items:center;gap:8px;margin-bottom:6px">'
+      +'<span style="font-size:11px;color:'+col+';min-width:52px;font-weight:500">'+lbl+'</span>'
+      +'<audio controls src="'+url+'" style="flex:1;height:28px;accent-color:'+col+'"></audio>'
+      +'<a href="'+url+'" download="'+name+'.mp3" style="font-size:10px;color:#555;text-decoration:none">↓</a>'
+      +'</div>';
+  }).join('');
+}
+
+// Check server on load and after each analysis
+setTimeout(checkDemucsServer, 1000);
+// ===== END DEMUCS =====
+
 function detectInstruments(data){
   // Rule-based instrument detection from spectral features
   // Uses: bpm, centroid, rolloff, stereoWidth, inharm, harmDens, tilt,
@@ -1136,6 +1240,7 @@ async function analyzeFile(input){
     setProgress(30);setStatus('Starte Analyse…');
     startWorkerAnalysis(buf);
     runEssentia(buf);
+    checkDemucsServer();
   }catch(e){
     setStatus('Fehler: '+e.message);
     console.error(e);
@@ -1256,6 +1361,7 @@ async function analyze(){
     setProgress(30);setStatus('Starte Analyse…');
     startWorkerAnalysis(buf);
     runEssentia(buf);
+    checkDemucsServer();
     drawSpectrum(buf,'freq-canvas');
   }catch(e){setStatus('Fehler: '+e.message);}
 }
