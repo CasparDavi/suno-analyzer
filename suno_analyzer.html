@@ -427,6 +427,28 @@ document.getElementById('zoom-slider').oninput=updateZoom;
 
 
 
+
+function mixToMono(buf){
+  var ch0=buf.getChannelData(0);
+  var ch1=buf.numberOfChannels>1?buf.getChannelData(1):ch0;
+  var mono=new Float32Array(ch0.length);
+  for(var i=0;i<mono.length;i++)mono[i]=0.5*(ch0[i]+ch1[i]);
+  return mono;
+}
+
+function resampleLinear(input,srcRate,dstRate){
+  if(srcRate===dstRate)return new Float32Array(input);
+  var ratio=srcRate/dstRate;
+  var outLen=Math.max(1,Math.round(input.length/ratio));
+  var out=new Float32Array(outLen);
+  for(var i=0;i<outLen;i++){
+    var pos=i*ratio;
+    var lo=Math.floor(pos),hi=Math.min(lo+1,input.length-1);
+    out[i]=input[lo]+(pos-lo)*(input[hi]-input[lo]);
+  }
+  return out;
+}
+
 // ===== ESSENTIA MTG INSTRUMENT RECOGNITION (ONNX) =====
 var _essentiaEffnetSession=null, _essentiaInstrSession=null, _essentiaRunning=false;
 
