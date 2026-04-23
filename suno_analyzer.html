@@ -47,7 +47,7 @@ audio{width:100%;border-radius:8px;margin:8px 0;accent-color:#7ab8f5}
 <script src="https://cdn.jsdelivr.net/npm/onnxruntime-web@1.18.0/dist/ort.min.js"></script>
 </head>
 <body>
-<h1>Suno Audio Analyzer <span style="font-size:10px;color:#444;font-weight:400">v4.1 · Essentia+Demucs</span></h1>
+<h1>Suno Audio Analyzer <span style="font-size:10px;color:#444;font-weight:400">v4.3 · Essentia+Demucs</span></h1>
 <div id="tt"></div>
 
 <div class="section">
@@ -80,14 +80,14 @@ audio{width:100%;border-radius:8px;margin:8px 0;accent-color:#7ab8f5}
       <img id="artwork" src="" alt="" style="width:100%;height:auto;border-radius:10px;object-fit:cover;display:none">
       <canvas id="density-canvas" style="width:100%;aspect-ratio:1;border-radius:6px;background:#080808;display:none"></canvas>
     </div>
-    <!-- Right column: stretches to full height of left column -->
-    <div style="flex:1;min-width:0;display:flex;flex-direction:column">
+    <!-- Right column: fixed height = artwork + density canvas, scrollable -->
+    <div style="flex:1;min-width:0;overflow-y:auto;max-height:var(--meta-left-h,400px)">
       <h2 id="title">—</h2>
       <div id="meta-sub"></div>
       <div id="tags" style="margin-top:4px"></div>
-      <div id="lyrics-wrap" style="display:none;margin-top:8px;flex:1;display:flex;flex-direction:column">
+      <div id="lyrics-wrap" style="display:none;margin-top:8px">
         <div style="font-size:11px;color:#555;margin-bottom:4px;cursor:pointer;user-select:none" onclick="var b=document.getElementById('lyrics-body');b.style.display=b.style.display==='none'?'block':'none';this.textContent=b.style.display==='none'?'▸ Lyrics / Prompt anzeigen':'▾ Lyrics / Prompt'">▾ Lyrics / Prompt</div>
-        <pre id="lyrics-body" style="font-size:11px;color:#888;line-height:1.7;white-space:pre-wrap;background:#0a0a0a;border-radius:6px;padding:10px;overflow-y:auto;margin:0;flex:1"></pre>
+        <pre id="lyrics-body" style="font-size:11px;color:#888;line-height:1.7;white-space:pre-wrap;background:#0a0a0a;border-radius:6px;padding:10px;overflow-y:auto;margin:0"></pre>
       </div>
     </div>
   </div>
@@ -1333,7 +1333,12 @@ var _densityMaxCount=0;
 
 function initDensitySpectrum(){
   if(!audioCtx||!window._mediaSource)return;
-  if(_densityAnalyser)return;
+  // Always reset histogram for new song
+  _densityHist=[];
+  for(var i=0;i<DENSITY_BINS;i++)
+    _densityHist.push(new Uint32Array(DENSITY_BUCKETS));
+  _densityMaxCount=0;
+  if(_densityAnalyser)return; // analyser node reused
   _densityAnalyser=audioCtx.createAnalyser();
   _densityAnalyser.fftSize=512;
   _densityAnalyser.smoothingTimeConstant=0;
@@ -1344,7 +1349,18 @@ function initDensitySpectrum(){
     _densityHist.push(new Uint32Array(DENSITY_BUCKETS));
   _densityMaxCount=0;
   var c=document.getElementById('density-canvas');
-  if(c)c.style.display='block';
+  if(c){
+    c.style.display='block';
+    // Update right column max-height
+    setTimeout(function(){
+      var ml=document.getElementById('meta-left');
+      if(ml){
+        var h=ml.offsetHeight;
+        var meta=document.getElementById('meta');
+        if(meta)meta.style.setProperty('--meta-left-h',h+'px');
+      }
+    },100);
+  }
   densityLoop();
 }
 
@@ -1812,11 +1828,12 @@ async function analyzeFile(input){
   window._chartData={};
   window._attackComputed=false;
   songDuration=0;zoomLevel=1;viewStart=0;viewEnd=1;window._spectroPerc=null;window._stereoP95=null;window._essentiaRunning=false;
+  _densityHist=null;_densityMaxCount=0;_densityAnalyser=null;
   document.getElementById('zoom-slider').value=0;
   document.getElementById('zoom-label').textContent='1×';
   if(window._animFrame){cancelAnimationFrame(window._animFrame);window._animFrame=null;}
-  if(window._mediaSource){try{window._mediaSource.disconnect();}catch(e){}window._mediaSource=null;}
   if(window._analyser){try{window._analyser.disconnect();}catch(e){}window._analyser=null;}
+  // _mediaSource intentionally kept — createMediaElementSource can only be called once
   if(window._blobURL){URL.revokeObjectURL(window._blobURL);}
 
   // reset cards
@@ -1878,11 +1895,12 @@ async function analyze(){
   window._chartData={};
   window._attackComputed=false;
   songDuration=0;zoomLevel=1;viewStart=0;viewEnd=1;window._spectroPerc=null;window._stereoP95=null;window._essentiaRunning=false;
+  _densityHist=null;_densityMaxCount=0;_densityAnalyser=null;
   document.getElementById('zoom-slider').value=0;
   document.getElementById('zoom-label').textContent='1×';
   if(window._animFrame){cancelAnimationFrame(window._animFrame);window._animFrame=null;}
-  if(window._mediaSource){try{window._mediaSource.disconnect();}catch(e){}window._mediaSource=null;}
   if(window._analyser){try{window._analyser.disconnect();}catch(e){}window._analyser=null;}
+  // _mediaSource intentionally kept — createMediaElementSource can only be called once
   player.pause();player.src='';
   document.getElementById('custom-player').style.display='none';
   // reset card values
@@ -1914,7 +1932,15 @@ async function analyze(){
     document.getElementById('meta').style.display='block';
     document.getElementById('title').textContent=meta.title||uuid;
     document.getElementById('meta-sub').textContent=(meta.author||'')+(meta.created_at?' · '+new Date(meta.created_at).toLocaleDateString('de-DE'):'');
-    if(meta.artwork){var img=document.getElementById('artwork');img.src=meta.artwork;img.style.display='block';}
+    if(meta.artwork){var img=document.getElementById('artwork');img.src=meta.artwork;img.style.display='block';
+      img.onload=function(){
+        var ml=document.getElementById('meta-left');
+        if(ml){
+          var h=ml.offsetHeight;
+          document.getElementById('meta').style.setProperty('--meta-left-h',h+'px');
+        }
+      };
+    }
     document.getElementById('tags').innerHTML=meta.tags.map(function(t){return '<span class="tag">'+t+'</span>';}).join('');
     document.getElementById('v-model').textContent=meta.model||'—';
     if(meta.lyrics||meta.prompt){
