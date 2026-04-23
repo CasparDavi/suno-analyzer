@@ -39,6 +39,18 @@ def status():
         'overlap': args.overlap
     })
 
+@app.route('/config', methods=['POST'])
+def set_config():
+    """Config in ~/demucs_config.json schreiben."""
+    try:
+        data = request.get_json()
+        config_path = os.path.expanduser('~/demucs_config.json')
+        with open(config_path, 'w') as f:
+            json.dump(data, f, indent=2)
+        return jsonify({'status': 'ok', 'config': data})
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
+
 @app.route('/shutdown', methods=['POST', 'GET'])
 def shutdown():
     """Watchdog bemerkt den Ausfall und startet mit neuer Config neu."""

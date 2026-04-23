@@ -47,7 +47,7 @@ audio{width:100%;border-radius:8px;margin:8px 0;accent-color:#7ab8f5}
 <script src="https://cdn.jsdelivr.net/npm/onnxruntime-web@1.18.0/dist/ort.min.js"></script>
 </head>
 <body>
-<h1>Suno Audio Analyzer <span style="font-size:10px;color:#444;font-weight:400">v3.4 · Essentia+Demucs</span></h1>
+<h1>Suno Audio Analyzer <span style="font-size:10px;color:#444;font-weight:400">v3.5 · Essentia+Demucs</span></h1>
 <div id="tt"></div>
 
 <div class="section">
@@ -110,16 +110,31 @@ audio{width:100%;border-radius:8px;margin:8px 0;accent-color:#7ab8f5}
 </div>
 
 <audio id="player" crossorigin="anonymous" style="display:none"></audio>
-<div id="custom-player" style="display:none;background:#1a1a1a;border-radius:8px;padding:8px 12px;margin-bottom:10px;user-select:none">
-  <div style="display:flex;align-items:center;gap:8px">
-    <button id="pp-btn" onclick="togglePlay()" style="background:none;border:1px solid #444;border-radius:50%;width:26px;height:26px;color:#eee;cursor:pointer;font-size:13px;line-height:26px;text-align:center;flex-shrink:0;padding:0">▶</button>
-    <span id="cur-time" style="font-size:11px;color:#888;min-width:36px;font-variant-numeric:tabular-nums">0:00</span>
-    <div id="prog-bar" style="flex:1;height:4px;background:#2a2a2a;border-radius:2px;cursor:pointer;position:relative" onmousedown="seekStart(event)" ontouchstart="seekStart(event)">
-      <div id="prog-fill" style="height:100%;background:#7ab8f5;border-radius:2px;width:0%;pointer-events:none"></div>
-      <div id="prog-head" style="position:absolute;top:50%;width:10px;height:10px;background:#fff;border-radius:50%;transform:translate(-50%,-50%);left:0%;pointer-events:none;transition:left 0.05s linear"></div>
+<div id="custom-player" style="display:none;margin-bottom:6px;user-select:none">
+  <!-- Transport row -->
+  <div style="display:flex;align-items:center;gap:8px;margin-bottom:4px">
+    <span id="cur-time" style="font-size:10px;color:#666;min-width:36px;font-variant-numeric:tabular-nums">0:00</span>
+    <span style="font-size:10px;color:#333">/ </span>
+    <span id="tot-time" style="font-size:10px;color:#444;font-variant-numeric:tabular-nums">0:00</span>
+    <input type="range" id="vol-slider" min="0" max="1" step="0.01" value="1"
+      style="width:70px;accent-color:#7ab8f5;margin-left:auto"
+      oninput="player.volume=this.value;player.muted=this.value==0">
+    <span style="font-size:10px;color:#444">🔊</span>
+  </div>
+  <!-- Waveform canvas with floating play button -->
+  <div class="chart-outer" style="height:48px;cursor:pointer;background:#0a0a0a;border-radius:4px"
+    onmousedown="seekStart(event)" ontouchstart="seekStart(event)">
+    <canvas id="main-waveform-canvas" style="height:48px;background:#0a0a0a;border-radius:4px"></canvas>
+    <div id="prog-head" style="position:absolute;top:0;bottom:0;width:1px;background:rgba(255,255,255,0.55);pointer-events:none;left:0%"></div>
+    <!-- Floating play button left -->
+    <button id="pp-btn" onclick="event.stopPropagation();togglePlay()"
+      style="position:absolute;left:0;top:0;height:100%;width:44px;
+      border:none;border-right:1px solid #7ab8f544;background:#7ab8f522;
+      color:#7ab8f5;font-size:14px;cursor:pointer;display:flex;align-items:center;justify-content:center">▶</button>
+    <!-- Hidden prog-bar/fill for compat -->
+    <div id="prog-bar" style="position:absolute;inset:0;pointer-events:none;opacity:0">
+      <div id="prog-fill" style="height:100%;background:#7ab8f5;width:0%"></div>
     </div>
-    <span id="tot-time" style="font-size:11px;color:#888;min-width:36px;text-align:right;font-variant-numeric:tabular-nums">0:00</span>
-    <button onclick="toggleMute()" id="vol-btn" style="background:none;border:none;color:#666;cursor:pointer;font-size:13px;padding:0;flex-shrink:0">🔊</button>
   </div>
 </div>
 <div class="row" style="margin-bottom:10px">
@@ -403,8 +418,11 @@ function toggleMute(){
 }
 function updatePlayerUI(){
   var pct=songDuration>0?player.currentTime/songDuration:0;
+  var view=getView?getView():{start:0,end:1};
+  var viewPct=view.end>view.start?(pct-view.start)/(view.end-view.start):pct;
+  viewPct=Math.max(0,Math.min(1,viewPct));
   document.getElementById('prog-fill').style.width=(pct*100)+'%';
-  document.getElementById('prog-head').style.left=(pct*100)+'%';
+  document.getElementById('prog-head').style.left=(viewPct*100)+'%';
   document.getElementById('cur-time').textContent=fmt(player.currentTime);
   document.getElementById('pp-btn').textContent=player.paused?'▶':'⏸';
 }
@@ -505,6 +523,45 @@ function resampleLinear(input,srcRate,dstRate){
   }
   return out;
 }
+
+function drawMainWaveform(){
+  var c=document.getElementById('main-waveform-canvas');
+  if(!c||!window._audioSamples)return;
+  var col='#7ab8f5';
+  var dpr=devicePixelRatio||1;
+  var w=c.clientWidth||c.offsetWidth||800;
+  var h=48;
+  c.width=w*dpr;c.height=h*dpr;
+  var ctx=c.getContext('2d');
+  ctx.setTransform(dpr,0,0,dpr,0,0);
+  ctx.clearRect(0,0,w,h);
+  var data=window._audioSamples;
+  var view=getView?getView():{start:0,end:1};
+  var s=Math.floor(view.start*data.length);
+  var e=Math.ceil(view.end*data.length);
+  var slice=data.subarray(s,e);
+  var step=Math.max(1,Math.floor(slice.length/w));
+  var mid=h/2;
+  ctx.fillStyle='#0a0a0a';ctx.fillRect(0,0,w,h);
+  ctx.beginPath();ctx.moveTo(0,mid);
+  for(var i=0;i<w;i++){
+    var idx=Math.floor(i*slice.length/w);
+    var max=0;
+    for(var j=0;j<step&&idx+j<slice.length;j++)max=Math.max(max,Math.abs(slice[idx+j]));
+    ctx.lineTo(i,mid-max*mid*0.9);
+  }
+  for(var i=w-1;i>=0;i--){
+    var idx=Math.floor(i*slice.length/w);
+    var max=0;
+    for(var j=0;j<step&&idx+j<slice.length;j++)max=Math.max(max,Math.abs(slice[idx+j]));
+    ctx.lineTo(i,mid+max*mid*0.9);
+  }
+  ctx.closePath();
+  ctx.fillStyle=col+'99';ctx.fill();
+  ctx.strokeStyle=col+'44';ctx.lineWidth=0.5;
+  ctx.beginPath();ctx.moveTo(0,mid);ctx.lineTo(w,mid);ctx.stroke();
+}
+
 
 // ===== ESSENTIA MTG INSTRUMENT RECOGNITION (ONNX) =====
 var _essentiaEffnetSession=null, _essentiaInstrSession=null, _essentiaRunning=false;
@@ -893,7 +950,6 @@ async function runStems(){
 async function buildStemPlayers(stems,names){
   var el=document.getElementById('stems-players');
   if(!el)return;
-  el.style.display='block';
 
   // Decode all stems into AudioBuffers
   if(!_stemCtx||_stemCtx.state==='closed')
@@ -911,9 +967,11 @@ async function buildStemPlayers(stems,names){
     _stemMuted[name]=false;
   }));
 
-  // Build HTML — transport + waveform canvases + mute buttons
   var dur=Object.values(_stemBuffers)[0]?Object.values(_stemBuffers)[0].duration:0;
-  el.innerHTML='<div style="background:#0a0a0a;border-radius:8px;padding:10px 12px;border:1px solid #1a1a1a">'
+  var hasDummy=!!document.getElementById('stem-canvas-'+names[0]);
+
+  // Only rebuild HTML if no dummy exists yet
+  if(!hasDummy) el.innerHTML='<div style="background:#0a0a0a;border-radius:8px;padding:10px 12px;border:1px solid #1a1a1a">'
     // Transport
     +'<div style="display:flex;align-items:center;gap:8px;margin-bottom:8px">'
     +'<button id="stems-pp" onclick="stemTogglePlay()" style="width:28px;height:28px;border-radius:50%;background:#1a1a1a;border:1px solid #333;color:#aaa;font-size:12px;cursor:pointer">▶</button>'
@@ -943,7 +1001,25 @@ async function buildStemPlayers(stems,names){
     }).join('')
     +'</div>';
 
-  // Draw waveforms
+  // Draw waveforms — fills dummy canvases or newly created ones
+  // Update time display with real duration
+  var timeEl=document.getElementById('stems-cur-time');
+  if(timeEl)timeEl.nextSibling&&(timeEl.nextSibling.textContent='/ '+fmt(dur));
+  // Re-enable mute buttons
+  names.forEach(function(name){
+    var btn=document.getElementById('stem-mute-'+name);
+    if(btn){
+      var col=_stemColors[name]||'#888';
+      btn.style.color=col;
+      btn.style.cursor='pointer';
+      btn.onclick=function(){stemToggleMute(name);};
+    }
+    var dlBtn=document.querySelector('a[download="'+name+'.mp3"]');
+    if(dlBtn&&stems&&stems[name]){
+      dlBtn.href='data:audio/mpeg;base64,'+stems[name];
+      dlBtn.style.color='#555';
+    }
+  });
   names.forEach(function(name){
     if(_stemBuffers[name])drawStemWaveform(name,_stemBuffers[name]);
   });
@@ -1422,6 +1498,7 @@ function redrawAllCharts(){
   }
   if(d.essentia)drawEssentiaTimeline(d.essentia.timeline,d.essentia.duration);
   redrawStemWaveforms();
+  drawMainWaveform();
 }
 
 // store all chart data for redraw
@@ -1705,6 +1782,7 @@ async function analyze(){
     // store samples for high-zoom rendering
     window._audioSamples=new Float32Array(buf.getChannelData(0));
     window._audioSR=buf.sampleRate;
+    drawMainWaveform();
     document.getElementById('v-dur').textContent=fmt(buf.duration);
     setProgress(30);setStatus('Starte Analyse…');
     startWorkerAnalysis(buf);
