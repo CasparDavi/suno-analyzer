@@ -47,7 +47,7 @@ audio{width:100%;border-radius:8px;margin:8px 0;accent-color:#7ab8f5}
 <script src="https://cdn.jsdelivr.net/npm/onnxruntime-web@1.18.0/dist/ort.min.js"></script>
 </head>
 <body>
-<h1>Suno Audio Analyzer <span style="font-size:10px;color:#444;font-weight:400">v3.9 · Essentia+Demucs</span></h1>
+<h1>Suno Audio Analyzer <span style="font-size:10px;color:#444;font-weight:400">v4.1 · Essentia+Demucs</span></h1>
 <div id="tt"></div>
 
 <div class="section">
@@ -74,18 +74,20 @@ audio{width:100%;border-radius:8px;margin:8px 0;accent-color:#7ab8f5}
 </div>
 
 <div id="meta" style="display:none;margin-bottom:10px">
-  <div style="display:flex;gap:14px;align-items:flex-start">
-    <div style="display:flex;flex-direction:column;gap:4px;flex-shrink:0;width:25%;max-width:200px;min-width:80px">
+  <div style="display:flex;gap:14px;align-items:stretch">
+    <!-- Left column: artwork + density spectrum -->
+    <div id="meta-left" style="display:flex;flex-direction:column;gap:4px;flex-shrink:0;width:25%;max-width:200px;min-width:80px">
       <img id="artwork" src="" alt="" style="width:100%;height:auto;border-radius:10px;object-fit:cover;display:none">
-      <canvas id="density-canvas" style="width:100%;aspect-ratio:1;border-radius:6px;background:#0a0a0a;display:none"></canvas>
+      <canvas id="density-canvas" style="width:100%;aspect-ratio:1;border-radius:6px;background:#080808;display:none"></canvas>
     </div>
-    <div style="flex:1;min-width:0">
+    <!-- Right column: stretches to full height of left column -->
+    <div style="flex:1;min-width:0;display:flex;flex-direction:column">
       <h2 id="title">—</h2>
       <div id="meta-sub"></div>
       <div id="tags" style="margin-top:4px"></div>
-      <div id="lyrics-wrap" style="display:none;margin-top:8px">
+      <div id="lyrics-wrap" style="display:none;margin-top:8px;flex:1;display:flex;flex-direction:column">
         <div style="font-size:11px;color:#555;margin-bottom:4px;cursor:pointer;user-select:none" onclick="var b=document.getElementById('lyrics-body');b.style.display=b.style.display==='none'?'block':'none';this.textContent=b.style.display==='none'?'▸ Lyrics / Prompt anzeigen':'▾ Lyrics / Prompt'">▾ Lyrics / Prompt</div>
-        <pre id="lyrics-body" style="font-size:11px;color:#888;line-height:1.7;white-space:pre-wrap;background:#0a0a0a;border-radius:6px;padding:10px;max-height:240px;overflow-y:auto;margin:0"></pre>
+        <pre id="lyrics-body" style="font-size:11px;color:#888;line-height:1.7;white-space:pre-wrap;background:#0a0a0a;border-radius:6px;padding:10px;overflow-y:auto;margin:0;flex:1"></pre>
       </div>
     </div>
   </div>
@@ -891,7 +893,17 @@ function drawEssentiaTimeline(timeline,duration){
 
 
 // ===== DEMUCS STEM SEPARATION =====
+// Try https first (Safari), fall back to http (Chrome)
 var DEMUCS_URL='http://localhost:5001';
+async function detectDemucsURL(){
+  for(var proto of ['https','http']){
+    try{
+      var r=await fetch(proto+'://localhost:5001/status',{signal:AbortSignal.timeout(2000)});
+      if(r.ok){DEMUCS_URL=proto+'://localhost:5001';return;}
+    }catch(e){}
+  }
+}
+detectDemucsURL();
 var _stemsCache=null;
 var _stemBuffers={};
 var _stemNodes={};
@@ -1313,24 +1325,23 @@ setTimeout(checkDemucsServer,1000);
 
 
 // ===== CUMULATIVE FREQUENCY DENSITY SPECTRUM =====
-var _densityAccum=null;  // [freqBins][amplBuckets] — uint32 counts
+var DENSITY_BINS=30;
+var DENSITY_BUCKETS=200;  // amplitude resolution
+var _densityHist=null;    // [bins][buckets] — counts
 var _densityAnalyser=null;
-var _densityRaf=null;
-var DENSITY_FREQ_BINS=128;
-var DENSITY_AMP_BUCKETS=128;
-var DENSITY_MAX_COUNT=0;
+var _densityMaxCount=0;
 
 function initDensitySpectrum(){
   if(!audioCtx||!window._mediaSource)return;
   if(_densityAnalyser)return;
   _densityAnalyser=audioCtx.createAnalyser();
-  _densityAnalyser.fftSize=DENSITY_FREQ_BINS*2;
+  _densityAnalyser.fftSize=512;
   _densityAnalyser.smoothingTimeConstant=0;
   try{window._mediaSource.connect(_densityAnalyser);}catch(e){}
-  _densityAccum=[];
-  for(var i=0;i<DENSITY_FREQ_BINS;i++){
-    _densityAccum.push(new Uint32Array(DENSITY_AMP_BUCKETS));
-  }
+  // Init histogram
+  _densityHist=[];
+  for(var i=0;i<DENSITY_BINS;i++)
+    _densityHist.push(new Uint32Array(DENSITY_BUCKETS));
   _densityMaxCount=0;
   var c=document.getElementById('density-canvas');
   if(c)c.style.display='block';
@@ -1338,56 +1349,123 @@ function initDensitySpectrum(){
 }
 
 function densityLoop(){
-  _densityRaf=requestAnimationFrame(densityLoop);
+  requestAnimationFrame(densityLoop);
   if(!_densityAnalyser||player.paused)return;
-  var buf=new Uint8Array(DENSITY_FREQ_BINS);
-  _densityAnalyser.getByteFrequencyData(buf);
-  for(var i=0;i<DENSITY_FREQ_BINS;i++){
-    var bucket=Math.floor(buf[i]/256*DENSITY_AMP_BUCKETS);
-    if(bucket>=DENSITY_AMP_BUCKETS)bucket=DENSITY_AMP_BUCKETS-1;
-    _densityAccum[i][bucket]++;
-    if(_densityAccum[i][bucket]>_densityMaxCount)_densityMaxCount=_densityAccum[i][bucket];
+  var raw=new Uint8Array(_densityAnalyser.frequencyBinCount);
+  _densityAnalyser.getByteFrequencyData(raw);
+  // Map FFT bins to DENSITY_BINS (log-ish grouping)
+  var fftBins=raw.length;
+  for(var b=0;b<DENSITY_BINS;b++){
+    var lo=Math.floor(Math.pow(b/DENSITY_BINS,1.5)*fftBins);
+    var hi=Math.floor(Math.pow((b+1)/DENSITY_BINS,1.5)*fftBins);
+    if(hi<=lo)hi=lo+1;
+    var peak=0;
+    for(var k=lo;k<hi&&k<fftBins;k++) peak=Math.max(peak,raw[k]);
+    var bucket=Math.floor(peak/256*DENSITY_BUCKETS);
+    if(bucket>=DENSITY_BUCKETS)bucket=DENSITY_BUCKETS-1;
+    _densityHist[b][bucket]++;
+    if(_densityHist[b][bucket]>_densityMaxCount)
+      _densityMaxCount=_densityHist[b][bucket];
   }
   drawDensitySpectrum();
 }
 
+function densityPercentile(hist,pct){
+  // Find amplitude bucket corresponding to percentile
+  var total=0;
+  for(var i=0;i<hist.length;i++)total+=hist[i];
+  if(!total)return 0;
+  var target=total*pct;
+  var cum=0;
+  for(var i=0;i<hist.length;i++){
+    cum+=hist[i];
+    if(cum>=target)return i;
+  }
+  return hist.length-1;
+}
+
+function densityMode(hist){
+  var max=0,idx=0;
+  for(var i=0;i<hist.length;i++) if(hist[i]>max){max=hist[i];idx=i;}
+  return idx;
+}
+
 function drawDensitySpectrum(){
   var c=document.getElementById('density-canvas');
-  if(!c||!_densityAccum)return;
+  if(!c||!_densityHist)return;
   var dpr=devicePixelRatio||1;
-  var size=c.clientWidth||200;
-  c.width=size*dpr;c.height=size*dpr;
+  var size=c.clientWidth||150;
+  if(c.width!==size*dpr){c.width=size*dpr;c.height=size*dpr;}
   var ctx=c.getContext('2d');
   ctx.setTransform(dpr,0,0,dpr,0,0);
-  ctx.fillStyle='#0a0a0a';
+  ctx.fillStyle='#080808';
   ctx.fillRect(0,0,size,size);
   if(!_densityMaxCount)return;
 
-  var cellW=size/DENSITY_FREQ_BINS;
-  var cellH=size/DENSITY_AMP_BUCKETS;
+  var binW=size/DENSITY_BINS;
 
-  for(var f=0;f<DENSITY_FREQ_BINS;f++){
-    for(var a=0;a<DENSITY_AMP_BUCKETS;a++){
-      var count=_densityAccum[f][a];
+  for(var b=0;b<DENSITY_BINS;b++){
+    var hist=_densityHist[b];
+    var p5=densityPercentile(hist,0.05);
+    var p50=densityPercentile(hist,0.50);
+    var p95=densityPercentile(hist,0.95);
+    var mode=densityMode(hist);
+    var binMax=0;
+    for(var i=0;i<DENSITY_BUCKETS;i++) binMax=Math.max(binMax,hist[i]);
+
+    var x=b*binW;
+
+    // Draw each bucket as a pixel row
+    for(var a=0;a<DENSITY_BUCKETS;a++){
+      var count=hist[a];
       if(!count)continue;
-      // Log scale brightness — rare events still visible
-      var brightness=Math.log1p(count)/Math.log1p(_densityMaxCount);
-      // Color: dark blue → cyan → white
-      var r=Math.round(brightness*brightness*200);
-      var g=Math.round(brightness*180);
-      var b=Math.round(brightness*255);
-      ctx.fillStyle='rgb('+r+','+g+','+b+')';
-      // Y: amplitude bucket 0=bottom, max=top
-      var y=size-(a+1)*cellH;
-      ctx.fillRect(f*cellW, y, cellW+0.5, cellH+0.5);
+      var relFreq=count/binMax; // 0..1, mode=1
+      var y=size-(a+1)/DENSITY_BUCKETS*size;
+      var h=size/DENSITY_BUCKETS+0.5;
+
+      var r,g,bl,alpha;
+      if(a===mode){
+        // Modal value — full white
+        r=255;g=255;bl=255;alpha=1.0;
+      } else if(a===p50){
+        // Median — white, slightly smaller
+        r=220;g=220;bl=220;alpha=0.9;
+      } else if(a>=p5&&a<=p95){
+        // IQR — gradient blue→white→orange
+        var t=(a-p5)/(p95-p5); // 0=p5(blue), 0.5=median(white), 1=p95(orange)
+        if(t<0.5){
+          // blue to white
+          var tt=t*2;
+          r=Math.round(50+tt*205);
+          g=Math.round(100+tt*155);
+          bl=Math.round(255-tt*55);
+        } else {
+          // white to orange
+          var tt=(t-0.5)*2;
+          r=255;
+          g=Math.round(255-tt*155);
+          bl=Math.round(200-tt*200);
+        }
+        alpha=0.3+relFreq*0.65;
+      } else if(a<p5){
+        // Below p5 — blue, fading
+        var dist=(p5-a)/Math.max(1,p5);
+        r=30;g=80;bl=220;
+        alpha=(1-dist)*relFreq*0.5;
+      } else {
+        // Above p95 — orange, fading
+        var dist=(a-p95)/Math.max(1,DENSITY_BUCKETS-p95);
+        r=255;g=120;bl=20;
+        alpha=(1-dist)*relFreq*0.5;
+      }
+
+      ctx.fillStyle='rgba('+r+','+g+','+bl+','+alpha.toFixed(3)+')';
+      ctx.fillRect(x, y, binW+0.3, h);
     }
   }
 }
 
-// Init density when player starts
-player.addEventListener('play', function(){
-  initDensitySpectrum();
-});
+player.addEventListener('play', function(){ initDensitySpectrum(); });
 // ===== END DENSITY SPECTRUM =====
 
 function detectInstruments(data){
